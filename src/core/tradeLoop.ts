@@ -322,9 +322,53 @@ class TradeLoop {
         confidence = obSignal.confidence;
         reasoning = obSignal.reasoning;
 
+        // ⚠️ TREND FILTER: Block counter-trend trades
+        // Trade WITH the trend for higher probability
+        const emaTrend = indicatorService.getEMATrend(indicators);
+        
+        // TREND RULES (10x leverage - più conservativo):
+        // - BUY: OK in bullish, OK in neutral con alta confidence
+        // - SELL: OK in bearish, OK in neutral con alta confidence
+        // - Counter-trend: BLOCKED sempre
+        const isCounterTrend = 
+          (decision === 'BUY' && emaTrend === 'bearish') ||
+          (decision === 'SELL' && emaTrend === 'bullish');
+        
+        // Neutral trend: richiede confidence più alta (75%)
+        const isNeutralHighRisk = 
+          emaTrend === 'neutral' && confidence < 0.75;
+        
+        if (isCounterTrend && decision !== 'HOLD') {
+          logger.warn(`🚫 COUNTER-TREND BLOCKED: ${decision} blocked because EMA trend is ${emaTrend}`, {
+            obDecision: decision,
+            emaTrend,
+            confidencePercent: `${(confidence * 100).toFixed(0)}%`,
+          });
+          // BLOCK the trade completely
+          decision = 'HOLD';
+          confidence = 0;
+          reasoning = `[BLOCKED - COUNTER-TREND] ${decision} not allowed in ${emaTrend} trend`;
+        } else if (isNeutralHighRisk && decision !== 'HOLD') {
+          logger.warn(`🚫 NEUTRAL-LOW-CONF BLOCKED: ${decision} needs 75%+ confidence in neutral trend`, {
+            obDecision: decision,
+            emaTrend,
+            confidencePercent: `${(confidence * 100).toFixed(0)}%`,
+          });
+          decision = 'HOLD';
+          confidence = 0;
+          reasoning = `[BLOCKED - NEUTRAL LOW CONF] Needs 75%+ in neutral trend`;
+        } else if (decision !== 'HOLD') {
+          // Trend alignment bonus
+          const trendBonus = emaTrend !== 'neutral' ? 1.15 : 1.05;
+          confidence = Math.min(0.95, confidence * trendBonus);
+          reasoning = `[TREND-ALIGNED ✅] ${reasoning}`;
+          logger.info(`✅ TREND-ALIGNED: ${decision} confirmed by ${emaTrend} trend`);
+        }
+
         logger.info(`📊 Order Book Decision: ${decision}`, {
           decision,
           confidencePercent: `${(confidence * 100).toFixed(0)}%`,
+          emaTrend,
           reasoning: reasoning.substring(0, 100),
         });
 
@@ -455,9 +499,9 @@ Remember: We need trades to make profits. Only reject clear counter-signals.
         }
       }
 
-      // Effective threshold based on strategy mode
+      // Effective threshold based on strategy mode - USE CONFIG VALUE
       const effectiveThreshold = STRATEGY_MODE === 'ORDER_BOOK_ONLY'
-        ? Math.max(0.55, config.trading.confidenceThreshold)
+        ? config.trading.confidenceThreshold  // Use config (0.70)
         : STRATEGY_MODE === 'HYBRID'
         ? Math.max(0.60, config.trading.confidenceThreshold)  // HYBRID needs higher confidence
         : Math.max(config.trading.confidenceThreshold, finalFilter.adjustedConfidenceThreshold);

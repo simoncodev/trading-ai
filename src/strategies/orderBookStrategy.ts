@@ -19,22 +19,23 @@ export interface OrderBookSignal {
 const STATIC_CONFIG = {
   // Wall detection
   WALL_DISTANCE_THRESHOLD: 0.20,     // Wall within 0.20% = significant
-  
+
   // Confidence boosts
   WALL_CONFIDENCE_BOOST: 0.10,       // +10% confidence if wall supports trade
   PRESSURE_CONFIDENCE_BOOST: 0.08,   // +8% confidence if pressure aligns
   MOMENTUM_CONFIDENCE_BOOST: 0.07,   // +7% confidence if momentum aligns
 };
-
 // Fallback config (used if adaptive params not available)
+// OPTIMIZED: Higher confidence threshold
 const FALLBACK_CONFIG = {
   STRONG_IMBALANCE_THRESHOLD: 0.35,
   WEAK_IMBALANCE_THRESHOLD: 0.22,
   MAX_SPREAD_PERCENT: 0.12,
   MIN_LIQUIDITY_SCORE: 45,
   PRESSURE_THRESHOLD: 0.58,
-  MIN_TRADE_CONFIDENCE: 0.55,
+  MIN_TRADE_CONFIDENCE: 0.70,  // Raised from 0.55 to avoid marginal trades
 };
+
 
 /**
  * Get effective config (adaptive or fallback)
@@ -79,23 +80,54 @@ export async function generateOrderBookSignal(symbol: string): Promise<OrderBook
   try {
     // Get adaptive parameters
     const config = await getEffectiveConfig(symbol);
-    
+
     const analysis = await orderBookAnalyzer.analyzeOrderBook(symbol);
-    
+
     if (!analysis) {
       logger.warn(`[OrderBookStrategy] No order book data for ${symbol}`);
       return null;
     }
 
-    // Log order book data with regime
-    logger.info(`📊 [${symbol}] Order Book (${config.regime}):`, {
+    // Log order book data with regime and market state
+    logger.info(`📊 [${symbol}] Order Book (${config.regime}) [${analysis.marketState}]:`, {
       imbalance: `${(analysis.imbalanceRatio * 100).toFixed(1)}%`,
       signal: analysis.imbalanceSignal,
       spread: `${analysis.spread.toFixed(4)}%`,
       bidPressure: `${(analysis.bidPressure * 100).toFixed(1)}%`,
       askPressure: `${(analysis.askPressure * 100).toFixed(1)}%`,
       liquidity: analysis.liquidityScore,
+      marketState: analysis.marketState,
+      aggression: `${(analysis.aggressionScore * 100).toFixed(0)}%`,
+      breakoutConfirmed: analysis.breakoutConfirmed,
     });
+
+    // ========================================
+    // FABIO VALENTINO'S MARKET STATE FILTER
+    // Key: "Trade only when market is out of balance"
+    // ========================================
+
+    // CONSOLIDATION: DO NOT TRADE
+    if (analysis.marketState === 'CONSOLIDATION') {
+      return {
+        decision: 'HOLD',
+        confidence: 0,
+        reasoning: `[CONSOLIDATION] Evitare trading - mercato bilanciato senza direzione`,
+        orderBookData: analysis,
+        regime: config.regime,
+      };
+    }
+
+    // ABSORPTION DETECTED: Potential reversal - be cautious
+    if (analysis.absorptionDetected) {
+      logger.warn(`⚠️ [${symbol}] ABSORPTION DETECTED - Big orders no follow-through`);
+      return {
+        decision: 'HOLD',
+        confidence: 0,
+        reasoning: `[ABSORPTION] Grandi ordini senza follow-through - possibile inversione`,
+        orderBookData: analysis,
+        regime: config.regime,
+      };
+    }
 
     // Check basic requirements (using adaptive params)
     if (analysis.spread > config.maxSpread) {
@@ -121,79 +153,123 @@ export async function generateOrderBookSignal(symbol: string): Promise<OrderBook
     // Analyze imbalance
     const imbalance = analysis.imbalanceRatio;
     const absImbalance = Math.abs(imbalance);
-    
+
     let decision: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
     let confidence = 0;
     let reasons: string[] = [];
-    
-    // Add regime to reasoning
+
+    // Add market state and regime to reasoning
+    reasons.push(`[${analysis.marketState}]`);
     reasons.push(`[${config.regime}]`);
 
-    // Strong imbalance signal (using adaptive threshold)
-    if (absImbalance >= config.strongImbalance) {
-      decision = imbalance > 0 ? 'BUY' : 'SELL';
-      // Base confidence 50% + bonus per imbalance extra
-      confidence = 0.50 + (absImbalance - config.strongImbalance) * 0.6;
-      reasons.push(`Forte imbalance ${decision === 'BUY' ? 'BID' : 'ASK'}: ${(imbalance * 100).toFixed(1)}%`);
+    // ========================================
+    // IMBALANCED MARKET - TREND FOLLOWING MODE
+    // Key: "In uptrend only BUY, in downtrend only SELL"
+    // ========================================
+    if (analysis.marketState === 'IMBALANCED_UP' || analysis.marketState === 'IMBALANCED_DOWN') {
+      const expectedDirection = analysis.marketState === 'IMBALANCED_UP' ? 'BUY' : 'SELL';
+
+      // Strong signal: Market state + imbalance + aggression aligned
+      if (absImbalance >= config.weakImbalance) {
+        const imbalanceDirection = imbalance > 0 ? 'BUY' : 'SELL';
+
+        // Only trade in direction of market state
+        if (imbalanceDirection === expectedDirection) {
+          decision = expectedDirection;
+          // Base confidence higher in imbalanced market
+          confidence = 0.55 + (absImbalance - config.weakImbalance) * 0.8;
+          reasons.push(`📈 TREND MODE: ${expectedDirection} allineato con market state`);
+
+          // Aggression bonus
+          const aggressionAligns =
+            (decision === 'BUY' && analysis.aggressionScore > 0.2) ||
+            (decision === 'SELL' && analysis.aggressionScore < -0.2);
+
+          if (aggressionAligns) {
+            confidence += 0.12;
+            reasons.push(`🔥 Aggression confirms: ${(analysis.aggressionScore * 100).toFixed(0)}%`);
+          }
+
+          // Breakout confirmation bonus (second drive)
+          if (analysis.breakoutConfirmed) {
+            confidence += 0.15;
+            reasons.push(`✅ SECOND DRIVE CONFIRMED - alta probabilità`);
+          }
+        } else {
+          reasons.push(`⚠️ Imbalance opposto a market state - SKIP`);
+        }
+      }
     }
-    // Weak imbalance - need confirmation
-    else if (absImbalance >= config.weakImbalance) {
-      const potentialDecision = imbalance > 0 ? 'BUY' : 'SELL';
-      // Base confidence 42% + bonus per imbalance
-      confidence = 0.42 + (absImbalance - config.weakImbalance) * 0.9;
-      reasons.push(`Imbalance moderato ${potentialDecision === 'BUY' ? 'BID' : 'ASK'}: ${(imbalance * 100).toFixed(1)}%`);
-      
-      // Need pressure confirmation for weak imbalance
-      const pressureConfirms = 
-        (potentialDecision === 'BUY' && analysis.bidPressure > config.pressureThreshold) ||
-        (potentialDecision === 'SELL' && analysis.askPressure > config.pressureThreshold);
-      
-      if (pressureConfirms) {
-        decision = potentialDecision;
-        confidence += STATIC_CONFIG.PRESSURE_CONFIDENCE_BOOST;
-        reasons.push(`Pressione conferma: ${potentialDecision === 'BUY' ? 'BID' : 'ASK'} ${((potentialDecision === 'BUY' ? analysis.bidPressure : analysis.askPressure) * 100).toFixed(1)}%`);
+    // ========================================
+    // BALANCED MARKET - MEAN REVERSION / CAUTIOUS
+    // Key: "Wait for second breakout confirmation"
+    // ========================================
+    else if (analysis.marketState === 'BALANCED') {
+      // In balanced market, ONLY trade if breakout is confirmed
+      if (!analysis.breakoutConfirmed) {
+        // Check for strong imbalance that might indicate early breakout
+        if (absImbalance >= config.strongImbalance) {
+          reasons.push(`⏳ Imbalance forte ma attesa conferma second drive`);
+          // Give a smaller signal for potential breakout
+          const potentialDirection = imbalance > 0 ? 'BUY' : 'SELL';
+          decision = potentialDirection;
+          confidence = 0.45 + (absImbalance - config.strongImbalance) * 0.5;
+          reasons.push(`Imbalance ${(imbalance * 100).toFixed(1)}% - confidence ridotta (no confirm)`);
+        }
+      } else {
+        // Breakout confirmed in balanced market = good setup
+        decision = imbalance > 0 ? 'BUY' : 'SELL';
+        confidence = 0.60 + absImbalance * 0.4;
+        reasons.push(`🎯 BREAKOUT CONFIRMED in balanced market`);
       }
     }
 
-    // Additional confidence boosts
+    // ========================================
+    // ADDITIONAL CONFIDENCE MODIFIERS
+    // ========================================
     if (decision !== 'HOLD') {
-      // Check for supportive walls
-      if (decision === 'BUY' && analysis.nearestBidWall && 
-          analysis.nearestBidWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
+      // Wall support/resistance bonus
+      if (decision === 'BUY' && analysis.nearestBidWall &&
+        analysis.nearestBidWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
         confidence += STATIC_CONFIG.WALL_CONFIDENCE_BOOST;
-        reasons.push(`Wall supporto: $${analysis.nearestBidWall.price.toFixed(2)} (${analysis.nearestBidWall.distancePercent.toFixed(2)}% sotto)`);
+        reasons.push(`Wall supporto: $${analysis.nearestBidWall.price.toFixed(2)}`);
       }
-      if (decision === 'SELL' && analysis.nearestAskWall && 
-          analysis.nearestAskWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
+      if (decision === 'SELL' && analysis.nearestAskWall &&
+        analysis.nearestAskWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
         confidence += STATIC_CONFIG.WALL_CONFIDENCE_BOOST;
-        reasons.push(`Wall resistenza: $${analysis.nearestAskWall.price.toFixed(2)} (${analysis.nearestAskWall.distancePercent.toFixed(2)}% sopra)`);
+        reasons.push(`Wall resistenza: $${analysis.nearestAskWall.price.toFixed(2)}`);
       }
 
-      // Check momentum (if available) - RILASSATO: solo bonus, non blocca
+      // Low Volume Node - high probability entry zone
+      if (analysis.lowVolumeNode) {
+        confidence += 0.08;
+        reasons.push(`📍 LVN detected @ $${analysis.lowVolumeNode.price.toFixed(2)}`);
+      }
+
+      // Momentum check
       const momentum = orderBookAnalyzer.getImbalanceMomentum(symbol);
-      const momentumAligns = 
+      const momentumAligns =
         (decision === 'BUY' && momentum > 0.05) ||
         (decision === 'SELL' && momentum < -0.05);
-      
-      // Momentum opposto = penalità invece di blocco totale
-      const momentumOpposed = 
+
+      const momentumOpposed =
         (decision === 'BUY' && momentum < -0.10) ||
         (decision === 'SELL' && momentum > 0.10);
-      
+
       if (momentumOpposed) {
-        confidence -= 0.10;
-        reasons.push(`⚠️ Momentum contrario (${(momentum * 100).toFixed(1)}%) - confidence ridotta`);
+        confidence -= 0.15; // Stronger penalty
+        reasons.push(`⚠️ Momentum contrario (${(momentum * 100).toFixed(1)}%)`);
       } else if (momentumAligns) {
         confidence += STATIC_CONFIG.MOMENTUM_CONFIDENCE_BOOST;
-        reasons.push(`Momentum ${momentum > 0 ? 'positivo' : 'negativo'}: ${(momentum * 100).toFixed(1)}%`);
+        reasons.push(`Momentum ${momentum > 0 ? '+' : ''}${(momentum * 100).toFixed(1)}%`);
       }
 
-      // Pressure alignment boost for strong imbalance
-      const pressureAligns = 
+      // Pressure alignment
+      const pressureAligns =
         (decision === 'BUY' && analysis.bidPressure > analysis.askPressure) ||
         (decision === 'SELL' && analysis.askPressure > analysis.bidPressure);
-    
-      if (pressureAligns && absImbalance >= config.strongImbalance) {
+
+      if (pressureAligns) {
         confidence += STATIC_CONFIG.PRESSURE_CONFIDENCE_BOOST;
       }
     }
@@ -212,6 +288,7 @@ export async function generateOrderBookSignal(symbol: string): Promise<OrderBook
     logger.info(`📈 [${symbol}] Order Book Signal: ${decision}`, {
       confidencePercent: `${(confidence * 100).toFixed(0)}%`,
       regime: config.regime,
+      marketState: analysis.marketState,
       reasoning: reasoning.substring(0, 100),
     });
 
@@ -274,13 +351,13 @@ export function isOrderBookFavorable(
   }
 
   // Wall support check
-  if (direction === 'BUY' && analysis.nearestBidWall && 
-      analysis.nearestBidWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
+  if (direction === 'BUY' && analysis.nearestBidWall &&
+    analysis.nearestBidWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
     score += 15;
     reasons.push(`Wall supporto vicino`);
   }
-  if (direction === 'SELL' && analysis.nearestAskWall && 
-      analysis.nearestAskWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
+  if (direction === 'SELL' && analysis.nearestAskWall &&
+    analysis.nearestAskWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
     score += 15;
     reasons.push(`Wall resistenza vicino`);
   }

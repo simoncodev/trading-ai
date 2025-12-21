@@ -105,7 +105,10 @@ export interface SessionInfo {
 
 /**
  * Determines if current time is in a good trading session
- * Crypto markets are most active during US and EU overlap
+ * Based on Fabio Valentino's model:
+ * - New York session: Best for TREND FOLLOWING (high volatility)
+ * - London session: Good for MEAN REVERSION (moderate volatility)
+ * - Asia: Cautious trading
  */
 export function checkTradingSession(): SessionInfo {
   const now = new Date();
@@ -123,34 +126,37 @@ export function checkTradingSession(): SessionInfo {
 
   if (utcHour >= 0 && utcHour < 7) {
     // Asia session (00:00-07:00 UTC)
+    // LOW VOLATILITY - be very selective
     sessionName = 'Asia';
-    volatilityMultiplier = 0.8;
+    volatilityMultiplier = 0.6; // Reduced from 0.8
     shouldTrade = true;
-    reason = 'Asia session - moderate volatility';
+    reason = 'Asia session - bassa volatilità, solo setup ad alta probabilità';
   } else if (utcHour >= 7 && utcHour < 13) {
-    // Europe session (07:00-13:00 UTC)
-    sessionName = 'Europe';
+    // London/Europe session (07:00-13:00 UTC)
+    // MEAN REVERSION works well here
+    sessionName = 'London';
     volatilityMultiplier = 1.0;
     shouldTrade = true;
-    reason = 'Europe session - good volatility';
+    reason = 'London session - buona per mean reversion e breakout';
   } else if (utcHour >= 13 && utcHour < 21) {
-    // US session (13:00-21:00 UTC) - BEST FOR TRADING
-    sessionName = 'US';
-    volatilityMultiplier = 1.2;
+    // New York session (13:00-21:00 UTC) - BEST FOR TREND FOLLOWING
+    // This is where Fabio's model excels
+    sessionName = 'NewYork';
+    volatilityMultiplier = 1.4; // Increased from 1.2 - aggressive trading allowed
     shouldTrade = true;
-    reason = 'US session - highest volatility, best for scalping';
+    reason = 'New York session - MIGLIORE per trend following, alta volatilità';
   } else {
     // Late night (21:00-00:00 UTC)
-    sessionName = 'Late Night';
-    volatilityMultiplier = 0.5;
-    shouldTrade = true; // Still trade but with reduced size
-    reason = 'Late night - reduced volatility';
+    sessionName = 'LateNight';
+    volatilityMultiplier = 0.4; // Reduced - very cautious
+    shouldTrade = true;
+    reason = 'Late night - ridurre size, bassa liquidità';
   }
 
-  // Adjust for weekends
+  // Adjust for weekends - Fabio says avoid low volatility
   if (isWeekend) {
-    volatilityMultiplier *= 0.7;
-    reason += ' (weekend - lower liquidity)';
+    volatilityMultiplier *= 0.5;
+    reason += ' (weekend - evitare trading aggressivo)';
   }
 
   return {

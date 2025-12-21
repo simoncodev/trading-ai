@@ -10,15 +10,15 @@ class PositionManager {
   private checkInterval: NodeJS.Timeout | null = null;
   private readonly CHECK_FREQUENCY_MS = 2000; // Check every 2 seconds (was 500ms, caused race conditions)
 
-  // Configuration for scalping with 20x leverage
-  // With 20x leverage: 0.5% price move = 10% P&L
-  // SL/TP calibrati per evitare stop loss su noise
-  // IMPORTANTE: TP > SL per essere profittevoli (Risk/Reward ratio > 1)
-  private readonly DEFAULT_STOP_LOSS_PERCENT = 5.0; // 5% SL = ~0.25% price move con 20x
-  private readonly DEFAULT_TAKE_PROFIT_PERCENT = 10.0; // 10% TP = ~0.5% price move (risk/reward 1:2)
-  private readonly TRAILING_STOP_ACTIVATION_PERCENT = 5.0; // Activate trailing after 5% profit
-  private readonly TRAILING_STOP_DISTANCE_PERCENT = 2.0; // Trail at 2% from high
-  private readonly MAX_POSITION_AGE_MINUTES = 30; // Close stale positions after 30 minutes
+  // Configuration for scalping with 10x leverage
+  // With 10x leverage: 1% price move = 10% P&L
+  // OPTIMIZED FOR SCALPING: Tight SL/TP to capture quick moves
+  // R:R ratio 1:2.5 for positive expectancy
+  private readonly DEFAULT_STOP_LOSS_PERCENT = 2.0;       // 2% SL = 0.2% price move with 10x leverage
+  private readonly DEFAULT_TAKE_PROFIT_PERCENT = 5.0;     // 5% TP = 0.5% price move (1:2.5 R:R)
+  private readonly TRAILING_STOP_ACTIVATION_PERCENT = 2.5; // Activate trailing after 2.5% profit
+  private readonly TRAILING_STOP_DISTANCE_PERCENT = 1.0;   // Trail at 1% from high (tight for scalping)
+  private readonly MAX_POSITION_AGE_MINUTES = 15;          // Close stale positions after 15 minutes (scalping)
 
   // Track trailing stop prices per position
   private trailingStops: Map<string, { highestPrice: number; lowestPrice: number }> = new Map();
@@ -232,7 +232,7 @@ class PositionManager {
     if (config.system.dryRun) {
       const latency = isStopLoss ? 80 + Math.random() * 120 : 40 + Math.random() * 60;
       await new Promise(resolve => setTimeout(resolve, latency));
-      
+
       logger.debug(`🕐 Close simulation: latency=${latency.toFixed(0)}ms, slippage=${(slippagePercent * 100).toFixed(4)}%`);
     }
 

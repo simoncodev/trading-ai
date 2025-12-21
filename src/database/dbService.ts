@@ -211,6 +211,20 @@ class DatabaseService {
   }
 
   /**
+   * Get recent CLOSED trades (for dashboard Last Trades section)
+   */
+  async getRecentClosedTrades(limit = 10): Promise<any[]> {
+    const query = `
+      SELECT * FROM trades 
+      WHERE status = 'closed'
+      ORDER BY closed_at DESC 
+      LIMIT $1
+    `;
+    const result = await this.pool.query(query, [limit]);
+    return result.rows;
+  }
+
+  /**
    * Get recent AI decisions
    */
   async getRecentDecisions(limit = 50): Promise<any[]> {
@@ -350,12 +364,24 @@ class DatabaseService {
       SELECT 
         (SELECT COUNT(*) FROM trades WHERE status = 'open') as open_trades,
         (SELECT COUNT(*) FROM trades WHERE DATE(executed_at) = CURRENT_DATE) as today_trades,
-        (SELECT SUM(pnl) FROM trades WHERE DATE(executed_at) = CURRENT_DATE) as today_pnl,
+        (SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE DATE(executed_at) = CURRENT_DATE AND status = 'closed') as today_pnl,
         (SELECT COUNT(*) FROM ai_decisions WHERE created_at >= NOW() - INTERVAL '1 hour') as recent_decisions,
-        (SELECT balance FROM account_history ORDER BY timestamp DESC LIMIT 1) as current_balance
+        (SELECT balance FROM account_history ORDER BY timestamp DESC LIMIT 1) as current_balance,
+        (SELECT COUNT(*) FROM trades WHERE status = 'closed') as total_closed,
+        (SELECT COUNT(*) FROM trades WHERE status = 'closed' AND pnl > 0) as winning_trades
     `;
     const result = await this.pool.query(query);
-    return result.rows[0];
+    const row = result.rows[0];
+    
+    // Calculate win rate
+    const totalClosed = parseInt(row.total_closed) || 0;
+    const winningTrades = parseInt(row.winning_trades) || 0;
+    const winRate = totalClosed > 0 ? (winningTrades / totalClosed) * 100 : 0;
+    
+    return {
+      ...row,
+      win_rate: winRate
+    };
   }
 
   /**

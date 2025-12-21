@@ -322,11 +322,13 @@ class IndicatorService {
   }
   /**
    * Determines market trend based on EMAs
+   * Soglia ridotta per scalping (0.2% invece di 1%)
    */
   getEMATrend(indicators: Indicators): 'bullish' | 'bearish' | 'neutral' {
-    if (indicators.ema12 > indicators.ema26 * 1.01) {
+    // Soglia 0.2% per rilevare trend anche su timeframe brevi
+    if (indicators.ema12 > indicators.ema26 * 1.002) {
       return 'bullish';
-    } else if (indicators.ema12 < indicators.ema26 * 0.99) {
+    } else if (indicators.ema12 < indicators.ema26 * 0.998) {
       return 'bearish';
     }
     return 'neutral';

@@ -2,7 +2,16 @@ import { logger } from '../core/logger';
 import hyperliquidService from './hyperliquidService';
 
 /**
- * Order Book Analysis Result
+ * Market State based on Auction Market Theory (AMT)
+ * - BALANCED: Price trading efficiently, buyers/sellers in equilibrium
+ * - IMBALANCED_UP: Strong buyer aggression, momentum up
+ * - IMBALANCED_DOWN: Strong seller aggression, momentum down
+ * - CONSOLIDATION: Low volatility, no clear direction
+ */
+export type MarketState = 'BALANCED' | 'IMBALANCED_UP' | 'IMBALANCED_DOWN' | 'CONSOLIDATION';
+
+/**
+ * Order Book Analysis Result - Enhanced with Fabio Valentino's concepts
  */
 export interface OrderBookAnalysis {
   symbol: string;
@@ -24,7 +33,7 @@ export interface OrderBookAnalysis {
   askPressure: number;    // Weighted ask pressure
   pressureDelta: number;  // bidPressure - askPressure
   
-  // Wall detection
+  // Wall detection (Big Orders / "Bubbles")
   bidWalls: PriceWall[];  // Large buy orders
   askWalls: PriceWall[];  // Large sell orders
   nearestBidWall: PriceWall | null;
@@ -36,6 +45,13 @@ export interface OrderBookAnalysis {
   // Trading signal
   orderBookSignal: number; // -1 to 1, positive = bullish
   confidence: number;      // 0-1, how confident in the signal
+  
+  // NEW: Fabio Valentino concepts
+  marketState: MarketState;           // Auction market state
+  aggressionScore: number;            // -1 to 1, buyer vs seller aggression
+  absorptionDetected: boolean;        // Large orders with no follow-through
+  breakoutConfirmed: boolean;         // Second drive confirmation
+  lowVolumeNode: PriceWall | null;    // LVN - inefficient price area
 }
 
 export interface PriceWall {
@@ -150,6 +166,13 @@ class OrderBookAnalyzer {
       askWalls
     );
 
+    // NEW: Fabio Valentino's Auction Market Theory concepts
+    const marketState = this.detectMarketState(symbol, imbalanceRatio, spread, pressureDelta);
+    const aggressionScore = this.calculateAggressionScore(bidWalls, askWalls, pressureDelta);
+    const absorptionDetected = this.detectAbsorption(symbol, bidWalls, askWalls, imbalanceRatio);
+    const breakoutConfirmed = this.checkBreakoutConfirmation(symbol, imbalanceRatio, pressureDelta);
+    const lowVolumeNode = this.findLowVolumeNode(bids, asks, midPrice);
+
     return {
       symbol,
       timestamp,
@@ -170,7 +193,157 @@ class OrderBookAnalyzer {
       liquidityScore,
       orderBookSignal,
       confidence,
+      // NEW fields
+      marketState,
+      aggressionScore,
+      absorptionDetected,
+      breakoutConfirmed,
+      lowVolumeNode,
     };
+  }
+
+  /**
+   * Detect Market State using Auction Market Theory (AMT)
+   * Key concept: Trade only when market is out of balance (imbalanced)
+   */
+  private detectMarketState(
+    symbol: string,
+    imbalanceRatio: number,
+    spread: number,
+    _pressureDelta: number
+  ): MarketState {
+    const absImbalance = Math.abs(imbalanceRatio);
+    
+    // Get momentum from history
+    const momentum = this.getImbalanceMomentum(symbol);
+    const absMomentum = Math.abs(momentum);
+    
+    // IMBALANCED: Strong directional bias with momentum
+    // This is when Fabio says "trade only when out of balance"
+    if (absImbalance > 0.35 && absMomentum > 0.05) {
+      return imbalanceRatio > 0 ? 'IMBALANCED_UP' : 'IMBALANCED_DOWN';
+    }
+    
+    // CONSOLIDATION: Low spread, balanced, low momentum
+    // Fabio says "avoid trading during consolidation"
+    if (absImbalance < 0.15 && spread < 0.05 && absMomentum < 0.03) {
+      return 'CONSOLIDATION';
+    }
+    
+    // BALANCED: Buyers and sellers in equilibrium
+    // Wait for breakout confirmation before trading
+    return 'BALANCED';
+  }
+
+  /**
+   * Calculate Aggression Score
+   * Based on "large aggressive orders (bubbles)" concept
+   * Positive = buyer aggression, Negative = seller aggression
+   */
+  private calculateAggressionScore(
+    bidWalls: PriceWall[],
+    askWalls: PriceWall[],
+    pressureDelta: number
+  ): number {
+    // Sum of significant walls close to mid price
+    const nearBidWalls = bidWalls.filter(w => w.distancePercent < 0.3 && w.isSignificant);
+    const nearAskWalls = askWalls.filter(w => w.distancePercent < 0.3 && w.isSignificant);
+    
+    const bidAggression = nearBidWalls.reduce((sum, w) => sum + w.size, 0);
+    const askAggression = nearAskWalls.reduce((sum, w) => sum + w.size, 0);
+    
+    const totalAggression = bidAggression + askAggression;
+    if (totalAggression === 0) return pressureDelta; // Fallback to pressure
+    
+    // Combine wall aggression with pressure
+    const wallScore = (bidAggression - askAggression) / totalAggression;
+    return (wallScore * 0.6) + (pressureDelta * 0.4);
+  }
+
+  /**
+   * Detect Absorption - Big orders with no follow-through
+   * Key concept: "Big trades with no follow-through indicate absorption and potential reversals"
+   */
+  private detectAbsorption(
+    symbol: string,
+    bidWalls: PriceWall[],
+    askWalls: PriceWall[],
+    currentImbalance: number
+  ): boolean {
+    const history = this.previousImbalance.get(symbol);
+    if (!history || history.length < 3) return false;
+    
+    // Check if there are big walls but imbalance is reversing
+    const hasBigBidWalls = bidWalls.some(w => w.isSignificant && w.distancePercent < 0.2);
+    const hasBigAskWalls = askWalls.some(w => w.isSignificant && w.distancePercent < 0.2);
+    
+    // Previous imbalance direction
+    const prevImbalance = history[history.length - 2];
+    
+    // Absorption: Big walls present but imbalance reversing
+    if (hasBigBidWalls && currentImbalance < 0 && prevImbalance > 0.1) return true;
+    if (hasBigAskWalls && currentImbalance > 0 && prevImbalance < -0.1) return true;
+    
+    return false;
+  }
+
+  /**
+   * Check Breakout Confirmation (Second Drive)
+   * Key concept: "Wait for retest or second drive to confirm direction"
+   */
+  private checkBreakoutConfirmation(
+    symbol: string,
+    currentImbalance: number,
+    pressureDelta: number
+  ): boolean {
+    const history = this.previousImbalance.get(symbol);
+    if (!history || history.length < 4) return false;
+    
+    // Need consistent direction for last 3+ readings
+    const recentReadings = history.slice(-3);
+    const allPositive = recentReadings.every(r => r > 0.15);
+    const allNegative = recentReadings.every(r => r < -0.15);
+    
+    // Confirmation: Consistent imbalance + pressure alignment
+    if (allPositive && currentImbalance > 0.2 && pressureDelta > 0.1) return true;
+    if (allNegative && currentImbalance < -0.2 && pressureDelta < -0.1) return true;
+    
+    return false;
+  }
+
+  /**
+   * Find Low Volume Node (LVN)
+   * Key concept: "LVNs serve as high-probability entry/exit zones"
+   */
+  private findLowVolumeNode(
+    bids: OrderBookLevel[],
+    asks: OrderBookLevel[],
+    midPrice: number
+  ): PriceWall | null {
+    // Combine all levels and find gaps/low volume areas
+    const allLevels = [
+      ...bids.map(b => ({ price: b.price, size: b.size, side: 'bid' })),
+      ...asks.map(a => ({ price: a.price, size: a.size, side: 'ask' }))
+    ].sort((a, b) => a.price - b.price);
+    
+    const avgSize = allLevels.reduce((sum, l) => sum + l.size, 0) / allLevels.length;
+    
+    // Find level with significantly below-average volume close to mid price
+    for (const level of allLevels) {
+      const distancePercent = Math.abs(level.price - midPrice) / midPrice * 100;
+      
+      // LVN: Very low volume within 0.5% of mid price
+      if (level.size < avgSize * 0.3 && distancePercent < 0.5) {
+        return {
+          price: level.price,
+          size: level.size,
+          distancePercent,
+          isSignificant: true, // LVNs are always significant
+        };
+      }
+    }
+    
+    return null;
   }
 
   /**

@@ -27,7 +27,7 @@ class AIEngine {
     } else if (this.provider === 'deepseek') {
       this.deepseekClient = new OpenAI({
         apiKey: config.ai.apiKey,
-        baseURL: 'https://api.deepseek.com',
+        baseURL: 'https://api.deepseek.com/v3.2_speciale_expires_on_20251215',
       });
       logger.info('AI Engine initialized with DeepSeek');
     } else if (this.provider === 'anthropic') {

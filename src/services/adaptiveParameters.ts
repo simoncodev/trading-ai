@@ -33,71 +33,77 @@ export interface AdaptiveParams {
 }
 
 /**
- * Default parameters (baseline)
+ * Default parameters (baseline) - OPTIMIZED FOR SCALPING
+ * Risk: Tight stops for high-leverage trading
+ * R:R ratio 1:2.5 - realistic for scalping
  */
 const DEFAULT_PARAMS: Omit<AdaptiveParams, 'regime' | 'volatility' | 'trendStrength' | 'lastUpdate'> = {
-  strongImbalanceThreshold: 0.35,
-  weakImbalanceThreshold: 0.22,
-  maxSpreadPercent: 0.12,
-  minLiquidityScore: 45,
-  pressureThreshold: 0.58,
-  minTradeConfidence: 0.55,
-  stopLossPercent: 3,
-  takeProfitPercent: 6,
+  strongImbalanceThreshold: 0.35,  // 35% imbalance - market out of balance
+  weakImbalanceThreshold: 0.22,    // 22% for confirmation needed
+  maxSpreadPercent: 0.12,          // Max 0.12% spread
+  minLiquidityScore: 50,           // Min liquidity 50
+  pressureThreshold: 0.58,         // 58% pressure for confirmation
+  minTradeConfidence: 0.70,        // 70% confidence minimum (raised from 65%)
+  stopLossPercent: 0.8,            // 0.8% SL - TIGHT for scalping (with 10x = 8% loss max)
+  takeProfitPercent: 2.0,          // 2.0% TP - 1:2.5 R:R ratio
   positionSizeMultiplier: 1.0,
 };
 
 /**
- * Regime-specific parameter adjustments
+ * Regime-specific parameter adjustments - FABIO VALENTINO MODEL
+ * Trend Following: NY session, imbalanced markets
+ * Mean Reversion: London session, balanced/ranging markets
  */
 const REGIME_ADJUSTMENTS: Record<MarketRegime, Partial<AdaptiveParams>> = {
   'TRENDING_UP': {
-    // In uptrend: be more aggressive on BUY signals
-    strongImbalanceThreshold: 0.30,  // Lower threshold for buys
+    // IMBALANCED UP: Aggressive BUY only
+    // Optimized for scalping with leverage
+    strongImbalanceThreshold: 0.28,  // Lower threshold in trend
     weakImbalanceThreshold: 0.18,
-    minTradeConfidence: 0.50,
-    takeProfitPercent: 8,  // Let winners run
-    stopLossPercent: 2.5,  // Tighter SL
-    positionSizeMultiplier: 1.2,
+    minTradeConfidence: 0.65,        // Lower confidence OK in strong trend
+    takeProfitPercent: 3.0,          // 3% TP - let winners run a bit
+    stopLossPercent: 0.6,            // 0.6% SL - tight, 1:5 R:R
+    positionSizeMultiplier: 1.2,     // Slightly scale up in trend
   },
   'TRENDING_DOWN': {
-    // In downtrend: be more aggressive on SELL signals
-    strongImbalanceThreshold: 0.30,
+    // IMBALANCED DOWN: Aggressive SELL only
+    strongImbalanceThreshold: 0.28,
     weakImbalanceThreshold: 0.18,
-    minTradeConfidence: 0.50,
-    takeProfitPercent: 8,
-    stopLossPercent: 2.5,
+    minTradeConfidence: 0.65,
+    takeProfitPercent: 3.0,
+    stopLossPercent: 0.6,
     positionSizeMultiplier: 1.2,
   },
   'RANGING': {
-    // In range: be selective but not overly restrictive
-    strongImbalanceThreshold: 0.48,  // Balanced threshold (55% was too strict, 40% too loose)
-    weakImbalanceThreshold: 0.35,    // Reasonable minimum
-    minTradeConfidence: 0.68,        // Decent confidence required (75% was too strict)
-    takeProfitPercent: 3,            // Quick scalps
-    stopLossPercent: 1.5,            // Tight SL to minimize losses
-    positionSizeMultiplier: 0.6,     // Reduced size but not too much
+    // BALANCED MARKET: Mean reversion, very selective
+    // Quick in/out scalps
+    strongImbalanceThreshold: 0.45,  // Very strict
+    weakImbalanceThreshold: 0.32,
+    minTradeConfidence: 0.75,        // High confidence required
+    takeProfitPercent: 1.2,          // Quick scalps
+    stopLossPercent: 0.5,            // Very tight, 1:2.4 R:R
+    positionSizeMultiplier: 0.5,     // Small size in range
   },
   'HIGH_VOLATILITY': {
-    // High vol: be very selective, wider SL/TP
-    strongImbalanceThreshold: 0.45,
-    weakImbalanceThreshold: 0.32,
-    maxSpreadPercent: 0.15,  // Accept wider spreads
-    minLiquidityScore: 50,
-    minTradeConfidence: 0.65,
-    takeProfitPercent: 10,   // Wider TP
-    stopLossPercent: 5,      // Wider SL
-    positionSizeMultiplier: 0.5,  // Reduce size
+    // HIGH VOL: Very selective, slightly wider targets
+    strongImbalanceThreshold: 0.40,
+    weakImbalanceThreshold: 0.30,
+    maxSpreadPercent: 0.18,
+    minLiquidityScore: 55,
+    minTradeConfidence: 0.75,
+    takeProfitPercent: 4.0,          // Wider TP for volatility
+    stopLossPercent: 1.2,            // Slightly wider SL, 1:3.3 R:R
+    positionSizeMultiplier: 0.3,     // Very small size
   },
   'LOW_VOLATILITY': {
-    // Low vol: more aggressive, tighter targets
-    strongImbalanceThreshold: 0.28,
-    weakImbalanceThreshold: 0.18,
-    maxSpreadPercent: 0.08,  // Need tight spreads
-    minTradeConfidence: 0.50,
-    takeProfitPercent: 3,    // Quick scalps
-    stopLossPercent: 1.5,    // Tight SL
-    positionSizeMultiplier: 1.5,  // Can size up
+    // CONSOLIDATION: Avoid or be very selective
+    strongImbalanceThreshold: 0.50,  // Very strict
+    weakImbalanceThreshold: 0.38,
+    maxSpreadPercent: 0.08,
+    minTradeConfidence: 0.80,        // Very high confidence only
+    takeProfitPercent: 0.8,          // Small targets
+    stopLossPercent: 0.4,            // Very tight, 1:2 R:R
+    positionSizeMultiplier: 0.3,     // Small size
   },
 };
 

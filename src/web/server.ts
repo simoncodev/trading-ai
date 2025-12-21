@@ -185,6 +185,17 @@ export class WebServer {
       }
     });
 
+    // API: Get recent CLOSED trades for dashboard "Last Trades" section
+    this.app.get('/api/trades/recent', async (req: Request, res: Response) => {
+      try {
+        const limit = parseInt(req.query.limit as string) || 10;
+        const trades = await dbService.getRecentClosedTrades(limit);
+        res.json(trades);
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch recent trades' });
+      }
+    });
+
     this.app.get('/api/decisions', async (_req: Request, res: Response) => {
       try {
         const decisions = await dbService.getRecentDecisions(50);
@@ -479,7 +490,7 @@ export class WebServer {
       } catch (error) {
         logger.error('Failed to broadcast stats update', error);
       }
-    }, 5000); // Every 5 seconds - ottimizzato per performance browser
+    }, 1000); // Every 1 second - real-time updates
   }
 
   /**
