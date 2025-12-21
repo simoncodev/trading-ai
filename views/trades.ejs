@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TRADES</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'VT323', monospace;
+            background: #000;
+            color: #fff;
+            min-height: 100vh;
+            font-size: 18px;
+            line-height: 1.4;
+        }
+        
+        .container {
+            max-width: 100%;
+            padding: 8px;
+        }
+        
+        /* HEADER */
+        .header {
+            border: 4px solid #fff;
+            padding: 12px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header h1 {
+            font-size: 20px;
+            letter-spacing: 3px;
+        }
+        
+        .back-btn {
+            border: 2px solid #fff;
+            background: #000;
+            color: #fff;
+            padding: 6px 12px;
+            font-family: 'VT323', monospace;
+            font-size: 14px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        
+        .back-btn:hover {
+            background: #fff;
+            color: #000;
+        }
+        
+        /* FILTER TABS */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+        
+        .tab-btn {
+            flex: 1;
+            border: 3px solid #555;
+            background: #000;
+            color: #555;
+            padding: 10px;
+            font-family: 'VT323', monospace;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            cursor: pointer;
+        }
+        
+        .tab-btn.active {
+            border-color: #fff;
+            color: #fff;
+        }
+        
+        .tab-btn:hover {
+            border-color: #888;
+            color: #888;
+        }
+        
+        /* STATS SUMMARY */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        
+        .mini-stat {
+            border: 3px solid #fff;
+            padding: 10px;
+            text-align: center;
+        }
+        
+        .mini-stat-label {
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .mini-stat-value {
+            font-size: 18px;
+            margin-top: 2px;
+        }
+        
+        .mini-stat-value.positive { color: #0f0; }
+        .mini-stat-value.negative { color: #f00; }
+        
+        /* TRADES LIST */
+        .section {
+            border: 4px solid #fff;
+        }
+        
+        .section-header {
+            border-bottom: 3px solid #fff;
+            padding: 10px 12px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            background: #111;
+        }
+        
+        .trade-item {
+            border-bottom: 2px solid #333;
+            padding: 12px;
+        }
+        
+        .trade-item:last-child {
+            border-bottom: none;
+        }
+        
+        .trade-item.hidden {
+            display: none;
+        }
+        
+        .trade-row-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        
+        .trade-symbol {
+            font-size: 18px;
+            color: #ff0;
+        }
+        
+        .trade-side {
+            font-size: 14px;
+            padding: 2px 8px;
+            border: 2px solid;
+        }
+        
+        .trade-side.buy {
+            color: #0f0;
+            border-color: #0f0;
+        }
+        
+        .trade-side.sell {
+            color: #f00;
+            border-color: #f00;
+        }
+        
+        .trade-pnl {
+            font-size: 18px;
+        }
+        
+        .trade-pnl.positive { color: #0f0; }
+        .trade-pnl.negative { color: #f00; }
+        
+        .trade-row-bottom {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .trade-detail {
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .trade-status {
+            display: inline-block;
+            font-size: 11px;
+            padding: 2px 6px;
+            border: 1px solid;
+            margin-left: 8px;
+        }
+        
+        .trade-status.open {
+            color: #ff0;
+            border-color: #ff0;
+        }
+        
+        .trade-status.closed {
+            color: #888;
+            border-color: #888;
+        }
+        
+        .empty-state {
+            padding: 30px;
+            text-align: center;
+            color: #555;
+            font-size: 16px;
+        }
+        
+        /* SCROLLBAR */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #000;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border: 1px solid #fff;
+        }
+
+        /* Mobile adjustments */
+        @media (max-width: 500px) {
+            .trade-row-bottom {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- HEADER -->
+        <div class="header">
+            <h1>[ TRADES ]</h1>
+            <a href="/" class="back-btn">◄ BACK</a>
+        </div>
+        
+        <!-- FILTER TABS -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="filterTrades('all')">ALL</button>
+            <button class="tab-btn" onclick="filterTrades('open')">OPEN</button>
+            <button class="tab-btn" onclick="filterTrades('closed')">CLOSED</button>
+        </div>
+        
+        <!-- STATS SUMMARY -->
+        <div class="stats-row">
+            <div class="mini-stat">
+                <div class="mini-stat-label">TOTAL</div>
+                <div class="mini-stat-value" id="totalTrades"><%= trades.length %></div>
+            </div>
+            <div class="mini-stat">
+                <div class="mini-stat-label">WINS</div>
+                <div class="mini-stat-value positive" id="winTrades"><%= trades.filter(t => parseFloat(t.pnl || 0) > 0).length %></div>
+            </div>
+            <div class="mini-stat">
+                <div class="mini-stat-label">LOSSES</div>
+                <div class="mini-stat-value negative" id="lossTrades"><%= trades.filter(t => parseFloat(t.pnl || 0) < 0).length %></div>
+            </div>
+        </div>
+        
+        <!-- TRADES LIST -->
+        <div class="section">
+            <div class="section-header">◆ TRADE HISTORY</div>
+            <div id="tradesList">
+                <% if (trades.length === 0) { %>
+                    <div class="empty-state">NO TRADES YET</div>
+                <% } else { %>
+                    <% trades.forEach(trade => { 
+                        const pnl = parseFloat(trade.pnl || 0);
+                        const pnlPct = parseFloat(trade.pnl_percentage || 0);
+                        const symbol = trade.symbol.replace('-USDC', '');
+                    %>
+                        <div class="trade-item" data-status="<%= trade.status %>">
+                            <div class="trade-row-top">
+                                <div>
+                                    <span class="trade-symbol"><%= symbol %></span>
+                                    <span class="trade-side <%= trade.side %>"><%= trade.side.toUpperCase() %></span>
+                                    <span class="trade-status <%= trade.status %>"><%= trade.status.toUpperCase() %></span>
+                                </div>
+                                <div class="trade-pnl <%= pnl >= 0 ? 'positive' : 'negative' %>">
+                                    <%= trade.status === 'closed' ? (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) : '---' %>
+                                </div>
+                            </div>
+                            <div class="trade-row-bottom">
+                                <div class="trade-detail">
+                                    <span>ENTRY:</span>
+                                    <span>$<%= parseFloat(trade.entry_price).toFixed(2) %></span>
+                                </div>
+                                <div class="trade-detail">
+                                    <span>EXIT:</span>
+                                    <span><%= trade.exit_price ? '$' + parseFloat(trade.exit_price).toFixed(2) : '---' %></span>
+                                </div>
+                                <div class="trade-detail">
+                                    <span>QTY:</span>
+                                    <span><%= parseFloat(trade.quantity).toFixed(4) %></span>
+                                </div>
+                                <div class="trade-detail">
+                                    <span>P&L%:</span>
+                                    <span class="<%= pnlPct >= 0 ? 'positive' : 'negative' %>"><%= trade.status === 'closed' ? (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%' : '---' %></span>
+                                </div>
+                                <div class="trade-detail">
+                                    <span>OPEN:</span>
+                                    <span><%= new Date(trade.executed_at).toLocaleString('it-IT', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) %></span>
+                                </div>
+                                <div class="trade-detail">
+                                    <span>CLOSE:</span>
+                                    <span><%= trade.closed_at ? new Date(trade.closed_at).toLocaleString('it-IT', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '---' %></span>
+                                </div>
+                            </div>
+                        </div>
+                    <% }) %>
+                <% } %>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let currentFilter = 'all';
+        
+        function filterTrades(filter) {
+            currentFilter = filter;
+            
+            // Update tabs
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            // Filter trades
+            document.querySelectorAll('.trade-item').forEach(item => {
+                const status = item.dataset.status;
+                if (filter === 'all') {
+                    item.classList.remove('hidden');
+                } else if (filter === status) {
+                    item.classList.remove('hidden');
+                } else {
+                    item.classList.add('hidden');
+                }
+            });
+        }
+    </script>
+</body>
+</html>

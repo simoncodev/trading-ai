@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <h1 class="logo">🤖 Trading AI Agent</h1>
+            <ul class="nav-menu">
+                <li><a href="/" class="nav-link">Dashboard</a></li>
+                <li><a href="/trades" class="nav-link">Operazioni</a></li>
+                <li><a href="/performance" class="nav-link">Performance</a></li>
+                <li><a href="/decisions" class="nav-link active">Decisioni AI</a></li>
+                <li><a href="/backtest" class="nav-link">Backtest</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="page-header">
+            <h2>Storico Decisioni AI</h2>
+        </div>
+
+        <!-- Filter tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="filterDecisions('all')">Tutte</button>
+            <button class="tab-btn" onclick="filterDecisions('BUY')">Buy</button>
+            <button class="tab-btn" onclick="filterDecisions('SELL')">Sell</button>
+            <button class="tab-btn" onclick="filterDecisions('HOLD')">Hold</button>
+        </div>
+
+        <!-- Decisions Grid -->
+        <div class="decisions-grid" id="decisionsGrid">
+            <% decisions.forEach(decision => { %>
+                <div class="decision-card-large" data-decision="<%= decision.decision %>">
+                    <div class="decision-header">
+                        <div>
+                            <h4><%= decision.symbol %></h4>
+                            <p class="decision-time"><%= new Date(decision.created_at).toLocaleString('it-IT') %></p>
+                        </div>
+                        <div class="decision-badges">
+                            <span class="badge <%= decision.decision === 'BUY' ? 'badge-success' : decision.decision === 'SELL' ? 'badge-danger' : 'badge-warning' %>">
+                                <%= decision.decision %>
+                            </span>
+                            <% if (decision.executed) { %>
+                                <span class="badge badge-primary">ESEGUITA</span>
+                            <% } %>
+                        </div>
+                    </div>
+
+                    <div class="decision-body">
+                        <div class="confidence-bar">
+                            <div class="confidence-label">
+                                Confidenza: <%= (parseFloat(decision.confidence) * 100).toFixed(1) %>%
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: <%= (parseFloat(decision.confidence) * 100).toFixed(1) %>%"></div>
+                            </div>
+                        </div>
+
+                        <div class="decision-reasoning">
+                            <strong>Motivazione:</strong>
+                            <p><%= decision.reasoning %></p>
+                        </div>
+
+                        <div class="decision-price">
+                            <strong>Prezzo Corrente:</strong> $<%= parseFloat(decision.current_price).toFixed(2) %>
+                        </div>
+
+                        <div class="indicators-grid">
+                            <div class="indicator">
+                                <span class="indicator-label">RSI</span>
+                                <span class="indicator-value <%= decision.rsi > 70 ? 'text-danger' : decision.rsi < 30 ? 'text-success' : '' %>">
+                                    <%= decision.rsi ? parseFloat(decision.rsi).toFixed(2) : 'N/A' %>
+                                </span>
+                            </div>
+                            <div class="indicator">
+                                <span class="indicator-label">MACD</span>
+                                <span class="indicator-value">
+                                    <%= decision.macd ? parseFloat(decision.macd).toFixed(4) : 'N/A' %>
+                                </span>
+                            </div>
+                            <div class="indicator">
+                                <span class="indicator-label">MACD Signal</span>
+                                <span class="indicator-value">
+                                    <%= decision.macd_signal ? parseFloat(decision.macd_signal).toFixed(4) : 'N/A' %>
+                                </span>
+                            </div>
+                            <div class="indicator">
+                                <span class="indicator-label">MACD Histogram</span>
+                                <span class="indicator-value <%= decision.macd_histogram > 0 ? 'text-success' : 'text-danger' %>">
+                                    <%= decision.macd_histogram ? parseFloat(decision.macd_histogram).toFixed(4) : 'N/A' %>
+                                </span>
+                            </div>
+                            <div class="indicator">
+                                <span class="indicator-label">EMA 12</span>
+                                <span class="indicator-value">
+                                    <%= decision.ema_12 ? '$' + parseFloat(decision.ema_12).toFixed(2) : 'N/A' %>
+                                </span>
+                            </div>
+                            <div class="indicator">
+                                <span class="indicator-label">EMA 26</span>
+                                <span class="indicator-value">
+                                    <%= decision.ema_26 ? '$' + parseFloat(decision.ema_26).toFixed(2) : 'N/A' %>
+                                </span>
+                            </div>
+                            <div class="indicator">
+                                <span class="indicator-label">BB Upper</span>
+                                <span class="indicator-value">
+                                    <%= decision.bb_upper ? '$' + parseFloat(decision.bb_upper).toFixed(2) : 'N/A' %>
+                                </span>
+                            </div>
+                            <div class="indicator">
+                                <span class="indicator-label">BB Lower</span>
+                                <span class="indicator-value">
+                                    <%= decision.bb_lower ? '$' + parseFloat(decision.bb_lower).toFixed(2) : 'N/A' %>
+                                </span>
+                            </div>
+                        </div>
+
+                        <% if (decision.trade_id) { %>
+                            <div class="decision-trade-link">
+                                <a href="/trades">Trade ID: <%= decision.trade_id.substring(0, 8) %>...</a>
+                            </div>
+                        <% } %>
+                    </div>
+                </div>
+            <% }) %>
+        </div>
+
+        <% if (decisions.length === 0) { %>
+            <p class="empty-state">Nessuna decisione trovata</p>
+        <% } %>
+
+        <!-- Pagination -->
+        <% if (totalPages > 1) { %>
+            <div class="pagination">
+                <% if (currentPage > 1) { %>
+                    <a href="/decisions?page=<%= currentPage - 1 %>" class="pagination-btn">← Precedente</a>
+                <% } %>
+                
+                <span class="pagination-info">Pagina <%= currentPage %> di <%= totalPages %></span>
+                
+                <% if (currentPage < totalPages) { %>
+                    <a href="/decisions?page=<%= currentPage + 1 %>" class="pagination-btn">Successiva →</a>
+                <% } %>
+            </div>
+        <% } %>
+    </div>
+
+    <script src="/js/decisions.js"></script>
+</body>
+</html>

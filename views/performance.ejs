@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>STATS</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'VT323', monospace;
+            background: #000;
+            color: #fff;
+            min-height: 100vh;
+            font-size: 18px;
+            line-height: 1.4;
+        }
+        
+        .container {
+            max-width: 100%;
+            padding: 8px;
+        }
+        
+        /* HEADER */
+        .header {
+            border: 4px solid #fff;
+            padding: 12px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header h1 {
+            font-size: 20px;
+            letter-spacing: 3px;
+        }
+        
+        .back-btn {
+            border: 2px solid #fff;
+            background: #000;
+            color: #fff;
+            padding: 6px 12px;
+            font-family: 'VT323', monospace;
+            font-size: 14px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        
+        .back-btn:hover {
+            background: #fff;
+            color: #000;
+        }
+        
+        /* MAIN STATS GRID */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        
+        @media (min-width: 600px) {
+            .stats-grid {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+        
+        .stat-box {
+            border: 3px solid #fff;
+            padding: 12px 8px;
+            text-align: center;
+        }
+        
+        .stat-box.highlight {
+            border-width: 4px;
+        }
+        
+        .stat-label {
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .stat-value {
+            font-size: 20px;
+            margin-top: 4px;
+        }
+        
+        .stat-value.positive { color: #0f0; }
+        .stat-value.negative { color: #f00; }
+        .stat-value.warning { color: #ff0; }
+        
+        /* SECTION */
+        .section {
+            border: 4px solid #fff;
+            margin-bottom: 8px;
+        }
+        
+        .section-header {
+            border-bottom: 3px solid #fff;
+            padding: 10px 12px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            background: #111;
+        }
+        
+        .section-body {
+            padding: 0;
+        }
+        
+        /* DAILY PERFORMANCE */
+        .day-row {
+            border-bottom: 2px solid #333;
+            padding: 10px 12px;
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+            align-items: center;
+        }
+        
+        .day-row:last-child {
+            border-bottom: none;
+        }
+        
+        .day-date {
+            font-size: 14px;
+            color: #ff0;
+        }
+        
+        .day-trades {
+            text-align: center;
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .day-pnl {
+            text-align: right;
+            font-size: 16px;
+        }
+        
+        .day-pnl.positive { color: #0f0; }
+        .day-pnl.negative { color: #f00; }
+        
+        /* ASCII CHART */
+        .ascii-chart {
+            padding: 12px;
+            font-size: 12px;
+            line-height: 1.2;
+            overflow-x: auto;
+            white-space: pre;
+        }
+        
+        .chart-positive { color: #0f0; }
+        .chart-negative { color: #f00; }
+        .chart-axis { color: #555; }
+        
+        .empty-state {
+            padding: 30px;
+            text-align: center;
+            color: #555;
+            font-size: 16px;
+        }
+        
+        /* SCROLLBAR */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #000;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border: 1px solid #fff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- HEADER -->
+        <div class="header">
+            <h1>[ STATS ]</h1>
+            <a href="/" class="back-btn">◄ BACK</a>
+        </div>
+        
+        <!-- MAIN STATS -->
+        <div class="stats-grid">
+            <div class="stat-box highlight">
+                <div class="stat-label">TOTAL TRADES</div>
+                <div class="stat-value"><%= metrics.total_trades || 0 %></div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">WIN RATE</div>
+                <div class="stat-value <%= (metrics.win_rate && parseFloat(metrics.win_rate) >= 0.5) ? 'positive' : 'negative' %>">
+                    <%= metrics.win_rate ? (parseFloat(metrics.win_rate) * 100).toFixed(0) + '%' : '0%' %>
+                </div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">WINS</div>
+                <div class="stat-value positive"><%= metrics.winning_trades || 0 %></div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">LOSSES</div>
+                <div class="stat-value negative"><%= metrics.losing_trades || 0 %></div>
+            </div>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-box highlight">
+                <div class="stat-label">TOTAL P&L</div>
+                <div class="stat-value <%= parseFloat(metrics.total_pnl || 0) >= 0 ? 'positive' : 'negative' %>">
+                    <%= metrics.total_pnl ? (parseFloat(metrics.total_pnl) >= 0 ? '+' : '') + '$' + parseFloat(metrics.total_pnl).toFixed(2) : '$0.00' %>
+                </div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">AVG P&L</div>
+                <div class="stat-value <%= parseFloat(metrics.avg_pnl || 0) >= 0 ? 'positive' : 'negative' %>">
+                    <%= metrics.avg_pnl ? (parseFloat(metrics.avg_pnl) >= 0 ? '+' : '') + '$' + parseFloat(metrics.avg_pnl).toFixed(2) : '$0.00' %>
+                </div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">BEST TRADE</div>
+                <div class="stat-value positive">
+                    <%= metrics.best_trade ? '+$' + parseFloat(metrics.best_trade).toFixed(2) : '---' %>
+                </div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">WORST TRADE</div>
+                <div class="stat-value negative">
+                    <%= metrics.worst_trade ? '$' + parseFloat(metrics.worst_trade).toFixed(2) : '---' %>
+                </div>
+            </div>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-label">MAX DRAWDOWN</div>
+                <div class="stat-value negative">
+                    <%= metrics.max_drawdown ? '$' + parseFloat(metrics.max_drawdown).toFixed(2) : '---' %>
+                </div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">SHARPE RATIO</div>
+                <div class="stat-value warning">
+                    <%= metrics.sharpe_ratio ? parseFloat(metrics.sharpe_ratio).toFixed(2) : '---' %>
+                </div>
+            </div>
+        </div>
+        
+        <!-- P&L CHART (ASCII) -->
+        <div class="section">
+            <div class="section-header">◆ P&L CHART</div>
+            <div class="ascii-chart" id="pnlChart">
+                <% if (dailyPerformance.length === 0) { %>
+                    <div class="empty-state">NO DATA</div>
+                <% } else { %>
+                    <%
+                    const reversed = [...dailyPerformance].reverse().slice(-14);
+                    const pnls = reversed.map(d => parseFloat(d.daily_pnl || 0));
+                    const maxPnl = Math.max(...pnls, 1);
+                    const minPnl = Math.min(...pnls, -1);
+                    const range = Math.max(Math.abs(maxPnl), Math.abs(minPnl));
+                    const height = 8;
+                    
+                    // Build ASCII chart
+                    let chart = '';
+                    for (let row = height; row >= -height; row--) {
+                        let line = '';
+                        const threshold = (row / height) * range;
+                        
+                        // Y axis label
+                        if (row === height) {
+                            line += ('+$' + range.toFixed(0)).padStart(8) + ' │';
+                        } else if (row === 0) {
+                            line += '      $0 │';
+                        } else if (row === -height) {
+                            line += ('-$' + range.toFixed(0)).padStart(8) + ' │';
+                        } else {
+                            line += '         │';
+                        }
+                        
+                        // Bars
+                        pnls.forEach(pnl => {
+                            const barHeight = (pnl / range) * height;
+                            if (pnl >= 0 && row > 0 && row <= barHeight) {
+                                line += ' ██';
+                            } else if (pnl < 0 && row < 0 && row >= barHeight) {
+                                line += ' ▓▓';
+                            } else if (row === 0) {
+                                line += '───';
+                            } else {
+                                line += '   ';
+                            }
+                        });
+                        
+                        chart += line + '\n';
+                    }
+                    
+                    // X axis
+                    chart += '         └' + '───'.repeat(pnls.length) + '\n';
+                    chart += '          ';
+                    reversed.forEach(d => {
+                        const date = new Date(d.trade_date);
+                        chart += date.getDate().toString().padStart(2, '0') + ' ';
+                    });
+                    %>
+                    <span class="chart-axis"><%= chart %></span>
+                <% } %>
+            </div>
+        </div>
+        
+        <!-- DAILY PERFORMANCE -->
+        <div class="section">
+            <div class="section-header">◆ DAILY PERFORMANCE</div>
+            <div class="section-body">
+                <% if (dailyPerformance.length === 0) { %>
+                    <div class="empty-state">NO DATA YET</div>
+                <% } else { %>
+                    <% dailyPerformance.slice(0, 14).forEach(day => { 
+                        const pnl = parseFloat(day.daily_pnl || 0);
+                    %>
+                        <div class="day-row">
+                            <div class="day-date"><%= new Date(day.trade_date).toLocaleDateString('it-IT', {day:'2-digit',month:'2-digit'}) %></div>
+                            <div class="day-trades">
+                                <span class="positive"><%= day.winning_trades || 0 %>W</span> / 
+                                <span class="negative"><%= day.losing_trades || 0 %>L</span>
+                            </div>
+                            <div class="day-pnl <%= pnl >= 0 ? 'positive' : 'negative' %>">
+                                <%= (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) %>
+                            </div>
+                        </div>
+                    <% }) %>
+                <% } %>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
