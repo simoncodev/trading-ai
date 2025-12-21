@@ -460,6 +460,7 @@
     <div class="connection-status disconnected" id="connStatus">OFFLINE</div>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/dashboard.js"></script>
     <script>
         // WebSocket connection with auto-reconnect
         const socket = io({
@@ -656,38 +657,7 @@
             `).join('');
         }
 
-        // Fetch recent trades on load
-        async function loadTrades() {
-            try {
-                const res = await fetch('/api/trades/recent?limit=5');
-                const trades = await res.json();
-                renderTrades(trades);
-            } catch (e) {
-                console.error('Failed to load trades');
-            }
-        }
-
-        function renderTrades(trades) {
-            const container = document.getElementById('trades');
-
-            if (!trades || trades.length === 0) {
-                container.innerHTML = '<div class="empty-state">NO TRADES YET</div>';
-                return;
-            }
-
-            container.innerHTML = trades.slice(0, 5).map(t => {
-                const pnl = parseFloat(t.pnl) || 0;
-                const resultClass = pnl >= 0 ? 'win' : 'loss';
-                const symbol = t.symbol.replace('-USDC', '');
-
-                return `
-                    <div class="trade-row">
-                        <span class="trade-symbol">${symbol}</span>
-                        <span class="trade-result ${resultClass}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span>
-                    </div>
-                `;
-            }).join('');
-        }
+        // Note: loadTrades() and renderTrades() are now defined globally in public/js/dashboard.js
 
         function updateTradesList(newTrade) {
             loadTrades(); // Reload trades

@@ -5,10 +5,47 @@ const socket = io({
     timeout: 20000
 });
 
+// Global loadTrades function - reloads recent trades from API
+async function loadTrades() {
+    try {
+        const res = await fetch('/api/trades/recent?limit=5');
+        const trades = await res.json();
+        renderTrades(trades);
+    } catch (e) {
+        console.error('Failed to load trades:', e);
+    }
+}
+
+// Render trades to the UI
+function renderTrades(trades) {
+    const container = document.getElementById('trades');
+    if (!container) return;
+
+    if (!trades || trades.length === 0) {
+        container.innerHTML = '<div class="empty-state">NO TRADES YET</div>';
+        return;
+    }
+
+    container.innerHTML = trades.slice(0, 5).map(t => {
+        const pnl = parseFloat(t.pnl) || 0;
+        const resultClass = pnl >= 0 ? 'win' : 'loss';
+        const symbol = t.symbol.replace('-USDC', '');
+
+        return `
+            <div class="trade-row">
+                <span class="trade-symbol">${symbol}</span>
+                <span class="trade-result ${resultClass}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span>
+            </div>
+        `;
+    }).join('');
+}
+
 // Debug connessione
 socket.on('connect', () => {
     console.log('✅ WebSocket connesso:', socket.id);
     updateTimestamp();
+    // Reload trades on reconnect
+    loadTrades();
 });
 
 socket.on('disconnect', (reason) => {
@@ -25,6 +62,7 @@ document.addEventListener('visibilitychange', () => {
     isPageVisible = !document.hidden;
     if (isPageVisible) {
         updateTimestamp();
+        loadTrades(); // Reload trades when tab becomes visible
     }
 });
 
@@ -309,11 +347,20 @@ async function resetSystem() {
 // Listen for WebSocket events
 socket.on('trade:closed', (data) => {
     console.log('Trade closed:', data);
+    // Reload trades list
+    if (typeof loadTrades === 'function') {
+        loadTrades();
+    }
 });
 
 // Listen for automatic position closures (by Position Manager)
 socket.on('position:closed', (data) => {
     console.log('🔒 Position automatically closed:', data);
+    
+    // Reload trades list
+    if (typeof loadTrades === 'function') {
+        loadTrades();
+    }
     
     // Show notification
     const notification = document.createElement('div');
