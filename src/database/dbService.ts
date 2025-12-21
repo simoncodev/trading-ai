@@ -44,7 +44,7 @@ class DatabaseService {
   }
 
   /**
-   * Initialize database schema - creates tables if they don't exist
+   * Initialize database schema - creates tables and views if they don't exist
    */
   private async initializeSchema(): Promise<void> {
     try {
@@ -62,10 +62,73 @@ class DatabaseService {
         logger.info('✅ Database schema initialized successfully');
       } else {
         logger.info('✅ Database tables already exist');
+        // Always ensure views exist (they might be missing even if tables exist)
+        await this.ensureViewsExist();
       }
     } catch (error) {
       logger.error('Failed to initialize database schema', error);
       throw error;
+    }
+  }
+
+  /**
+   * Ensure all views exist - creates them if missing
+   */
+  private async ensureViewsExist(): Promise<void> {
+    try {
+      // Check if views exist
+      const viewCheck = await this.pool.query(`
+        SELECT COUNT(*) as count FROM information_schema.views 
+        WHERE table_schema = 'public' AND table_name = 'v_active_trades'
+      `);
+      
+      const viewsExist = parseInt(viewCheck.rows[0].count) > 0;
+      
+      if (!viewsExist) {
+        logger.info('📦 Database views not found. Creating views...');
+        await this.createViews();
+        logger.info('✅ Database views created successfully');
+      }
+    } catch (error) {
+      logger.error('Failed to ensure views exist', error);
+      // Don't throw - views are not critical, just log the error
+    }
+  }
+
+  /**
+   * Create database views
+   */
+  private async createViews(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(`
+        CREATE OR REPLACE VIEW v_active_trades AS
+        SELECT * FROM trades WHERE status = 'open' ORDER BY executed_at DESC
+      `);
+
+      await client.query(`
+        CREATE OR REPLACE VIEW v_recent_decisions AS
+        SELECT * FROM ai_decisions ORDER BY created_at DESC LIMIT 100
+      `);
+
+      await client.query(`
+        CREATE OR REPLACE VIEW v_daily_performance AS
+        SELECT 
+          DATE(executed_at) as trade_date,
+          COUNT(*) as total_trades,
+          SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+          SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_trades,
+          SUM(pnl) as daily_pnl,
+          AVG(pnl) as avg_pnl,
+          MAX(pnl) as best_trade,
+          MIN(pnl) as worst_trade
+        FROM trades
+        WHERE status = 'closed'
+        GROUP BY DATE(executed_at)
+        ORDER BY trade_date DESC
+      `);
+    } finally {
+      client.release();
     }
   }
 
