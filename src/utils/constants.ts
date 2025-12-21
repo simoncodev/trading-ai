@@ -29,10 +29,10 @@ export const RETRY_CONFIG = {
 // Trading constants
 export const TRADING_CONSTANTS = {
   MIN_ORDER_SIZE: 0.001,
-  MAX_LEVERAGE: 20, // Safe leverage for order book trading
+  MAX_LEVERAGE: 5, // REDUCED: 5x leverage is much safer
   DEFAULT_SLIPPAGE: 0.001, // 0.1%
   ORDER_TIMEOUT: 30000, // 30 seconds
-  ALLOWED_LEVERAGES: [20], // Use 20x leverage for safer trading
+  ALLOWED_LEVERAGES: [5], // Use 5x leverage for conservative trading
 };
 
 // AI constants

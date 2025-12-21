@@ -2,350 +2,444 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><%= title %></title>
-    <link rel="stylesheet" href="/css/style.css">
-    <script src="/socket.io/socket.io.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BACKTEST - TRADING BOT</title>
     <style>
-        .backtest-container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 20px;
+        @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        .config-panel {
-            background: var(--card-bg);
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 24px;
+        
+        body {
+            font-family: 'VT323', monospace;
+            background: #000;
+            color: #fff;
+            min-height: 100vh;
+            font-size: 18px;
+            line-height: 1.4;
         }
-        .config-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 20px;
+        
+        .container {
+            max-width: 100%;
+            padding: 8px;
         }
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-        .form-group label {
-            color: var(--text-secondary);
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
-        .form-group input, .form-group select {
-            padding: 10px 12px;
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            font-size: 0.95rem;
-        }
-        .form-group input:focus, .form-group select:focus {
-            outline: none;
-            border-color: var(--primary);
-        }
-        .btn-group {
-            display: flex;
-            gap: 12px;
-            margin-top: 20px;
-        }
-        .btn-run {
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: white;
-            padding: 12px 32px;
-            border: none;
-            border-radius: 8px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .btn-run:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-        }
-        .btn-run:disabled {
-            background: #6b7280;
-            cursor: not-allowed;
-            transform: none;
-        }
-        .btn-stop {
-            background: #ef4444;
-            color: white;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-        .progress-section {
-            background: var(--card-bg);
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 24px;
-            display: none;
-        }
-        .progress-section.active {
-            display: block;
-        }
-        .progress-bar {
-            height: 8px;
-            background: var(--bg-primary);
-            border-radius: 4px;
-            overflow: hidden;
-            margin: 12px 0;
-        }
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #10b981, #34d399);
-            width: 0%;
-            transition: width 0.3s;
-        }
-        .progress-text {
-            color: var(--text-secondary);
-            font-size: 0.9rem;
-        }
-        .results-section {
-            display: none;
-        }
-        .results-section.active {
-            display: block;
-        }
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-        .metric-card {
-            background: var(--card-bg);
-            border-radius: 12px;
-            padding: 20px;
+        
+        /* HEADER */
+        .header {
+            border: 4px solid #fff;
+            padding: 12px;
+            margin-bottom: 8px;
             text-align: center;
         }
-        .metric-value {
-            font-size: 1.8rem;
-            font-weight: 700;
+        
+        .header h1 {
+            font-size: 24px;
+            letter-spacing: 4px;
+        }
+        
+        .status-line {
+            font-size: 14px;
+            margin-top: 8px;
+            color: #888;
+        }
+        
+        /* SECTION */
+        .section {
+            border: 4px solid #fff;
+            margin-bottom: 8px;
+        }
+        
+        .section-header {
+            border-bottom: 3px solid #fff;
+            padding: 10px 12px;
+            font-size: 16px;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            background: #111;
+        }
+        
+        .section-body {
+            padding: 16px;
+        }
+        
+        /* CONFIG GRID */
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+        
+        @media (min-width: 600px) {
+            .config-grid {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+        
+        .form-group {
+            margin-bottom: 8px;
+        }
+        
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 2px;
             margin-bottom: 4px;
         }
-        .metric-value.positive { color: #10b981; }
-        .metric-value.negative { color: #ef4444; }
-        .metric-label {
-            color: var(--text-secondary);
-            font-size: 0.85rem;
-        }
-        .trades-table-container {
-            background: var(--card-bg);
-            border-radius: 12px;
-            padding: 20px;
-            overflow-x: auto;
-        }
-        .trades-table {
+        
+        .form-group input,
+        .form-group select {
             width: 100%;
-            border-collapse: collapse;
+            padding: 10px 12px;
+            border: 3px solid #fff;
+            background: #000;
+            color: #fff;
+            font-family: 'VT323', monospace;
+            font-size: 18px;
         }
-        .trades-table th, .trades-table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid var(--border-color);
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #0f0;
         }
-        .trades-table th {
-            color: var(--text-secondary);
-            font-weight: 500;
-            font-size: 0.85rem;
-        }
-        .badge {
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.8rem;
-            font-weight: 600;
-        }
-        .badge.buy { background: rgba(16, 185, 129, 0.2); color: #10b981; }
-        .badge.sell { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-        .badge.tp { background: rgba(16, 185, 129, 0.2); color: #10b981; }
-        .badge.sl { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-        .badge.signal { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
-        .equity-chart {
-            background: var(--card-bg);
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 24px;
-            height: 300px;
-        }
+        
         .checkbox-group {
             display: flex;
             align-items: center;
             gap: 8px;
+            margin-top: 20px;
         }
+        
         .checkbox-group input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
+            width: 20px;
+            height: 20px;
         }
-        .warning-box {
-            background: rgba(245, 158, 11, 0.1);
-            border: 1px solid rgba(245, 158, 11, 0.3);
-            border-radius: 8px;
-            padding: 12px 16px;
+        
+        /* BUTTONS */
+        .btn-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+        }
+        
+        .btn {
+            flex: 1;
+            border: 3px solid #fff;
+            background: #000;
+            color: #fff;
+            padding: 12px;
+            font-family: 'VT323', monospace;
+            font-size: 16px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+        
+        .btn:hover {
+            background: #fff;
+            color: #000;
+        }
+        
+        .btn:active {
+            transform: scale(0.98);
+        }
+        
+        .btn:disabled {
+            border-color: #333;
+            color: #333;
+            cursor: not-allowed;
+        }
+        
+        .btn.run {
+            border-color: #0f0;
+            color: #0f0;
+        }
+        
+        .btn.run:hover {
+            background: #0f0;
+            color: #000;
+        }
+        
+        .btn.stop {
+            border-color: #f00;
+            color: #f00;
+        }
+        
+        .btn.stop:hover {
+            background: #f00;
+            color: #000;
+        }
+        
+        /* PROGRESS */
+        .progress-bar {
+            height: 20px;
+            border: 3px solid #fff;
+            background: #000;
+            margin: 16px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: #0f0;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .progress-text {
+            font-size: 14px;
+            color: #0f0;
+            text-align: center;
+        }
+        
+        /* RESULTS */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
             margin-bottom: 16px;
-            color: #f59e0b;
-            font-size: 0.9rem;
+        }
+        
+        @media (min-width: 600px) {
+            .metrics-grid {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+        
+        .metric-box {
+            border: 3px solid #fff;
+            padding: 12px 8px;
+            text-align: center;
+        }
+        
+        .metric-label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        .metric-value {
+            font-size: 22px;
+            margin-top: 4px;
+        }
+        
+        .metric-value.positive { color: #0f0; }
+        .metric-value.negative { color: #f00; }
+        
+        /* CHART */
+        .chart-container {
+            border: 3px solid #fff;
+            padding: 12px;
+            margin-bottom: 16px;
+            height: 250px;
+        }
+        
+        /* TRADES TABLE */
+        .trades-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .trades-table th,
+        .trades-table td {
+            border: 1px solid #333;
+            padding: 8px;
+            text-align: left;
+            font-size: 14px;
+        }
+        
+        .trades-table th {
+            background: #111;
+            text-transform: uppercase;
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .badge {
+            padding: 2px 6px;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        
+        .badge.buy { color: #0f0; }
+        .badge.sell { color: #f00; }
+        .badge.tp { color: #0f0; }
+        .badge.sl { color: #f00; }
+        .badge.signal { color: #ff0; }
+        
+        /* WARNINGS */
+        .warning-box {
+            border: 3px solid #ff0;
+            padding: 12px;
+            color: #ff0;
+            margin-bottom: 16px;
+            font-size: 14px;
+            display: none;
+        }
+        
+        /* HIDDEN */
+        .hidden { display: none; }
+        
+        /* SCROLLBAR */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #000;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border: 1px solid #fff;
+        }
+        
+        /* TABLE SCROLL */
+        .table-container {
+            max-height: 300px;
+            overflow-y: auto;
         }
     </style>
 </head>
 <body>
-    <nav class="navbar">
-        <div class="nav-container">
-            <h1 class="logo">🤖 Trading AI Agent</h1>
-            <ul class="nav-menu">
-                <li><a href="/" class="nav-link">Dashboard</a></li>
-                <li><a href="/trades" class="nav-link">Operazioni</a></li>
-                <li><a href="/performance" class="nav-link">Performance</a></li>
-                <li><a href="/decisions" class="nav-link">Decisioni AI</a></li>
-                <li><a href="/backtest" class="nav-link active">Backtest</a></li>
-            </ul>
-        </div>
-    </nav>
-
-    <div class="backtest-container">
-        <div class="page-header">
-            <h2>📊 Backtest Strategia</h2>
-            <p class="timestamp">Testa la strategia su dati storici</p>
-        </div>
-
-        <!-- Configuration Panel -->
-        <div class="config-panel">
-            <h3 style="margin-bottom: 16px;">⚙️ Configurazione Backtest</h3>
-            
-            <div class="warning-box" id="aiWarning" style="display: none;">
-                ⚠️ <strong>Attenzione:</strong> Il backtest con AI richiede chiamate API per ogni decisione. 
-                Questo può richiedere molto tempo e consumare crediti. Limitato a ~500 chiamate AI.
+    <div class="container">
+        <!-- HEADER -->
+        <div class="header">
+            <h1>[ BACKTEST ]</h1>
+            <div class="status-line">
+                TEST STRATEGY ON HISTORICAL DATA
             </div>
-
-            <div class="config-grid">
-                <div class="form-group">
-                    <label>Simbolo</label>
-                    <select id="symbol">
-                        <option value="BTC">BTC (Bitcoin)</option>
-                        <option value="ETH">ETH (Ethereum)</option>
-                        <option value="SOL">SOL (Solana)</option>
-                        <option value="DOGE">DOGE (Dogecoin)</option>
-                    </select>
+        </div>
+        
+        <!-- CONFIG -->
+        <div class="section">
+            <div class="section-header">◆ CONFIGURATION</div>
+            <div class="section-body">
+                <div class="warning-box" id="aiWarning">
+                    ⚠ AI MODE: Requires API calls for each decision. May take time and consume credits.
                 </div>
-                <div class="form-group">
-                    <label>Data Inizio</label>
-                    <input type="date" id="startDate">
-                </div>
-                <div class="form-group">
-                    <label>Data Fine</label>
-                    <input type="date" id="endDate">
-                </div>
-                <div class="form-group">
-                    <label>Bilancio Iniziale ($)</label>
-                    <input type="number" id="initialBalance" value="100" min="10" step="10">
-                </div>
-                <div class="form-group">
-                    <label>Leverage</label>
-                    <select id="leverage">
-                        <option value="1">1x</option>
-                        <option value="2">2x</option>
-                        <option value="3">3x</option>
-                        <option value="5">5x</option>
-                        <option value="10" selected>10x</option>
-                        <option value="20">20x</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Stop Loss (%)</label>
-                    <input type="number" id="slPercent" value="1" min="0.1" max="10" step="0.1">
-                </div>
-                <div class="form-group">
-                    <label>Take Profit (%)</label>
-                    <input type="number" id="tpPercent" value="2" min="0.1" max="20" step="0.1">
-                </div>
-                <div class="form-group">
-                    <label>&nbsp;</label>
-                    <div class="checkbox-group">
-                        <input type="checkbox" id="useAI">
-                        <label for="useAI" style="margin: 0;">Usa AI per decisioni</label>
+                
+                <div class="config-grid">
+                    <div class="form-group">
+                        <label>Symbol</label>
+                        <select id="symbol">
+                            <option value="BTC">BTC</option>
+                            <option value="ETH">ETH</option>
+                            <option value="SOL">SOL</option>
+                            <option value="DOGE">DOGE</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Start Date</label>
+                        <input type="date" id="startDate">
+                    </div>
+                    <div class="form-group">
+                        <label>End Date</label>
+                        <input type="date" id="endDate">
+                    </div>
+                    <div class="form-group">
+                        <label>Balance ($)</label>
+                        <input type="number" id="initialBalance" value="100" min="10" step="10">
+                    </div>
+                    <div class="form-group">
+                        <label>Leverage</label>
+                        <select id="leverage">
+                            <option value="1">1x</option>
+                            <option value="2">2x</option>
+                            <option value="5" selected>5x</option>
+                            <option value="10">10x</option>
+                            <option value="20">20x</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Stop Loss %</label>
+                        <input type="number" id="slPercent" value="8" min="0.1" max="20" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label>Take Profit %</label>
+                        <input type="number" id="tpPercent" value="4" min="0.1" max="20" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="useAI">
+                            <label for="useAI" style="margin: 0; text-transform: none;">Use AI</label>
+                        </div>
                     </div>
                 </div>
-            </div>
-
-            <div class="btn-group">
-                <button class="btn-run" id="btnRun" onclick="runBacktest()">
-                    🚀 Avvia Backtest
-                </button>
-                <button class="btn-stop" id="btnStop" onclick="stopBacktest()" style="display: none;">
-                    ⏹️ Stop
-                </button>
+                
+                <div class="btn-row">
+                    <button class="btn run" id="btnRun" onclick="runBacktest()">▶ START BACKTEST</button>
+                    <button class="btn stop hidden" id="btnStop" onclick="stopBacktest()">■ STOP</button>
+                    <button class="btn" onclick="location.href='/'">← BACK</button>
+                </div>
             </div>
         </div>
-
-        <!-- Progress Section -->
-        <div class="progress-section" id="progressSection">
-            <h3>⏳ Backtest in corso...</h3>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
+        
+        <!-- PROGRESS -->
+        <div class="section hidden" id="progressSection">
+            <div class="section-header">◆ PROGRESS</div>
+            <div class="section-body">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <p class="progress-text" id="progressText">Initializing...</p>
             </div>
-            <p class="progress-text" id="progressText">Inizializzazione...</p>
         </div>
-
-        <!-- Results Section -->
-        <div class="results-section" id="resultsSection">
-            <h3 style="margin-bottom: 20px;">📈 Risultati Backtest</h3>
-
-            <!-- Metrics Grid -->
-            <div class="metrics-grid" id="metricsGrid">
-                <!-- Populated by JS -->
-            </div>
-
-            <!-- Equity Chart Placeholder -->
-            <div class="equity-chart" id="equityChart">
-                <h4>Equity Curve</h4>
-                <canvas id="chartCanvas"></canvas>
-            </div>
-
-            <!-- Trades Table -->
-            <div class="trades-table-container">
-                <h4 style="margin-bottom: 16px;">📋 Lista Trade</h4>
-                <table class="trades-table">
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Side</th>
-                            <th>Entry</th>
-                            <th>Exit</th>
-                            <th>P&L</th>
-                            <th>P&L %</th>
-                            <th>Exit Reason</th>
-                            <th>Durata</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tradesBody">
-                        <!-- Populated by JS -->
-                    </tbody>
-                </table>
+        
+        <!-- RESULTS -->
+        <div class="section hidden" id="resultsSection">
+            <div class="section-header">◆ RESULTS</div>
+            <div class="section-body">
+                <div class="metrics-grid" id="metricsGrid"></div>
+                
+                <div class="chart-container">
+                    <canvas id="chartCanvas"></canvas>
+                </div>
+                
+                <div class="section-header" style="margin: 16px -16px; margin-bottom: 0;">◆ TRADES LOG</div>
+                <div class="table-container">
+                    <table class="trades-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Side</th>
+                                <th>Entry</th>
+                                <th>Exit</th>
+                                <th>P&L</th>
+                                <th>%</th>
+                                <th>Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tradesBody"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
-
+    
+    <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
         const socket = io();
         let chart = null;
-
+        
         // Set default dates
         const today = new Date();
         const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
         document.getElementById('endDate').value = today.toISOString().split('T')[0];
         document.getElementById('startDate').value = weekAgo.toISOString().split('T')[0];
-
-        // Show AI warning when checkbox is checked
+        
+        // Show AI warning
         document.getElementById('useAI').addEventListener('change', (e) => {
             document.getElementById('aiWarning').style.display = e.target.checked ? 'block' : 'none';
         });
-
+        
         async function runBacktest() {
             const config = {
                 symbol: document.getElementById('symbol').value,
@@ -357,151 +451,139 @@
                 tpPercent: document.getElementById('tpPercent').value,
                 useAI: document.getElementById('useAI').checked,
             };
-
-            // Validate dates
+            
             if (!config.startDate || !config.endDate) {
-                alert('Seleziona date valide');
+                alert('Select valid dates');
                 return;
             }
-
-            // Show progress, hide results
-            document.getElementById('progressSection').classList.add('active');
-            document.getElementById('resultsSection').classList.remove('active');
+            
+            // Show progress
+            document.getElementById('progressSection').classList.remove('hidden');
+            document.getElementById('resultsSection').classList.add('hidden');
             document.getElementById('btnRun').disabled = true;
-            document.getElementById('btnStop').style.display = 'inline-block';
-
+            document.getElementById('btnStop').classList.remove('hidden');
+            
             try {
                 const response = await fetch('/api/backtest/run', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(config),
                 });
-
+                
                 const result = await response.json();
-
+                
                 if (response.ok) {
                     displayResults(result);
                 } else {
-                    alert('Errore: ' + result.error);
+                    alert('Error: ' + result.error);
                 }
             } catch (error) {
-                alert('Errore di connessione: ' + error.message);
+                alert('Connection error: ' + error.message);
             } finally {
-                document.getElementById('progressSection').classList.remove('active');
+                document.getElementById('progressSection').classList.add('hidden');
                 document.getElementById('btnRun').disabled = false;
-                document.getElementById('btnStop').style.display = 'none';
+                document.getElementById('btnStop').classList.add('hidden');
             }
         }
-
+        
         async function stopBacktest() {
             await fetch('/api/backtest/stop', { method: 'POST' });
         }
-
-        // Socket.IO progress updates
+        
+        // Socket.IO progress
         socket.on('backtest:progress', (data) => {
             const progress = data.total ? (data.current / data.total) * 100 : 0;
             document.getElementById('progressFill').style.width = progress + '%';
             document.getElementById('progressText').textContent = data.message;
         });
-
+        
         socket.on('backtest:status', (data) => {
             document.getElementById('progressText').textContent = data.message;
         });
-
+        
         function displayResults(result) {
             const m = result.metrics;
             
-            // Populate metrics
             const metricsHTML = `
-                <div class="metric-card">
+                <div class="metric-box">
+                    <div class="metric-label">P&L</div>
                     <div class="metric-value ${m.netPnL >= 0 ? 'positive' : 'negative'}">
                         $${m.netPnL.toFixed(2)}
                     </div>
-                    <div class="metric-label">P&L Netto</div>
                 </div>
-                <div class="metric-card">
-                    <div class="metric-value ${m.roi >= 0 ? 'positive' : 'negative'}">
-                        ${m.roi.toFixed(2)}%
-                    </div>
+                <div class="metric-box">
                     <div class="metric-label">ROI</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-value">${m.totalTrades}</div>
-                    <div class="metric-label">Trade Totali</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-value ${m.winRate >= 50 ? 'positive' : 'negative'}">
-                        ${m.winRate.toFixed(1)}%
+                    <div class="metric-value ${m.roi >= 0 ? 'positive' : 'negative'}">
+                        ${m.roi.toFixed(1)}%
                     </div>
-                    <div class="metric-label">Win Rate</div>
                 </div>
-                <div class="metric-card">
+                <div class="metric-box">
+                    <div class="metric-label">Trades</div>
+                    <div class="metric-value">${m.totalTrades}</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Win Rate</div>
+                    <div class="metric-value ${m.winRate >= 50 ? 'positive' : 'negative'}">
+                        ${m.winRate.toFixed(0)}%
+                    </div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Profit Factor</div>
                     <div class="metric-value ${m.profitFactor >= 1 ? 'positive' : 'negative'}">
                         ${m.profitFactor.toFixed(2)}
                     </div>
-                    <div class="metric-label">Profit Factor</div>
                 </div>
-                <div class="metric-card">
-                    <div class="metric-value negative">
-                        -${m.maxDrawdownPercent.toFixed(2)}%
-                    </div>
-                    <div class="metric-label">Max Drawdown</div>
+                <div class="metric-box">
+                    <div class="metric-label">Max DD</div>
+                    <div class="metric-value negative">-${m.maxDrawdownPercent.toFixed(1)}%</div>
                 </div>
-                <div class="metric-card">
+                <div class="metric-box">
+                    <div class="metric-label">Avg Win</div>
                     <div class="metric-value positive">$${m.averageWin.toFixed(2)}</div>
-                    <div class="metric-label">Media Win</div>
                 </div>
-                <div class="metric-card">
+                <div class="metric-box">
+                    <div class="metric-label">Avg Loss</div>
                     <div class="metric-value negative">$${m.averageLoss.toFixed(2)}</div>
-                    <div class="metric-label">Media Loss</div>
                 </div>
             `;
             document.getElementById('metricsGrid').innerHTML = metricsHTML;
-
-            // Populate trades table
-            const tradesHTML = result.trades.map(t => {
-                const duration = ((new Date(t.exitTime) - new Date(t.entryTime)) / 60000).toFixed(0);
-                return `
-                    <tr>
-                        <td>${t.id}</td>
-                        <td><span class="badge ${t.side}">${t.side.toUpperCase()}</span></td>
-                        <td>$${t.entryPrice.toFixed(2)}</td>
-                        <td>$${t.exitPrice.toFixed(2)}</td>
-                        <td style="color: ${t.pnl >= 0 ? '#10b981' : '#ef4444'}">
-                            ${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}
-                        </td>
-                        <td style="color: ${t.pnlPercent >= 0 ? '#10b981' : '#ef4444'}">
-                            ${t.pnlPercent >= 0 ? '+' : ''}${t.pnlPercent.toFixed(2)}%
-                        </td>
-                        <td><span class="badge ${t.exitReason}">${t.exitReason.toUpperCase()}</span></td>
-                        <td>${duration}m</td>
-                    </tr>
-                `;
-            }).join('');
+            
+            // Trades table
+            const tradesHTML = result.trades.map(t => `
+                <tr>
+                    <td>${t.id}</td>
+                    <td><span class="badge ${t.side}">${t.side.toUpperCase()}</span></td>
+                    <td>$${t.entryPrice.toFixed(2)}</td>
+                    <td>$${t.exitPrice.toFixed(2)}</td>
+                    <td style="color: ${t.pnl >= 0 ? '#0f0' : '#f00'}">
+                        ${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}
+                    </td>
+                    <td style="color: ${t.pnlPercent >= 0 ? '#0f0' : '#f00'}">
+                        ${t.pnlPercent >= 0 ? '+' : ''}${t.pnlPercent.toFixed(1)}%
+                    </td>
+                    <td><span class="badge ${t.exitReason}">${t.exitReason.toUpperCase()}</span></td>
+                </tr>
+            `).join('');
             document.getElementById('tradesBody').innerHTML = tradesHTML;
-
-            // Draw equity curve
+            
+            // Draw chart
             if (result.equityCurve && result.equityCurve.length > 0) {
                 drawEquityChart(result.equityCurve, result.config.initialBalance);
             }
-
-            document.getElementById('resultsSection').classList.add('active');
+            
+            document.getElementById('resultsSection').classList.remove('hidden');
         }
-
+        
         function drawEquityChart(equityCurve, initialBalance) {
             const ctx = document.getElementById('chartCanvas').getContext('2d');
             
-            if (chart) {
-                chart.destroy();
-            }
-
-            const labels = equityCurve.map(p => new Date(p.time).toLocaleDateString('it-IT', { 
-                month: 'short', 
-                day: 'numeric',
-                hour: '2-digit'
-            }));
+            if (chart) chart.destroy();
+            
+            const labels = equityCurve.map((p, i) => i);
             const data = equityCurve.map(p => p.equity);
-
+            const finalEquity = data[data.length - 1];
+            const lineColor = finalEquity >= initialBalance ? '#0f0' : '#f00';
+            
             chart = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -509,17 +591,17 @@
                     datasets: [{
                         label: 'Equity',
                         data: data,
-                        borderColor: data[data.length - 1] >= initialBalance ? '#10b981' : '#ef4444',
-                        backgroundColor: data[data.length - 1] >= initialBalance 
-                            ? 'rgba(16, 185, 129, 0.1)' 
-                            : 'rgba(239, 68, 68, 0.1)',
-                        fill: true,
-                        tension: 0.3,
+                        borderColor: lineColor,
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.1,
                     }, {
-                        label: 'Bilancio Iniziale',
+                        label: 'Initial',
                         data: Array(labels.length).fill(initialBalance),
-                        borderColor: '#6b7280',
+                        borderColor: '#555',
                         borderDash: [5, 5],
+                        borderWidth: 1,
                         pointRadius: 0,
                     }]
                 },
@@ -527,14 +609,15 @@
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: {
-                            display: true,
-                            position: 'top',
-                        }
+                        legend: { display: false }
                     },
                     scales: {
+                        x: {
+                            display: false
+                        },
                         y: {
-                            beginAtZero: false,
+                            grid: { color: '#333' },
+                            ticks: { color: '#888' }
                         }
                     }
                 }

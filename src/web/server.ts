@@ -8,6 +8,22 @@ import { logger } from '../core/logger';
 import { backtestEngine, BacktestConfig } from '../backtest/backtestEngine';
 
 /**
+ * Pending order structure
+ */
+export interface PendingOrder {
+  id: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  limitPrice: number;
+  quantity: number;
+  confidence: number;
+  reasoning: string;
+  createdAt: number;
+  status: 'pending' | 'filled' | 'cancelled';
+  currentPrice?: number;
+}
+
+/**
  * Web server for monitoring dashboard
  */
 export class WebServer {
@@ -15,6 +31,9 @@ export class WebServer {
   private server: any;
   private io: Server;
   private port: number;
+  
+  // Storage per ordini pending (in memoria)
+  private static pendingOrders: Map<string, PendingOrder> = new Map();
 
   constructor(port = 3000) {
     this.port = port;
@@ -303,6 +322,28 @@ export class WebServer {
       }
     });
 
+    // API: Get pending orders
+    this.app.get('/api/orders/pending', (_req: Request, res: Response) => {
+      try {
+        const pendingOrders = WebServer.getPendingOrders();
+        res.json(pendingOrders);
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch pending orders' });
+      }
+    });
+
+    // API: Cancel pending order
+    this.app.delete('/api/orders/pending/:orderId', (_req: Request, res: Response) => {
+      try {
+        const { orderId } = _req.params;
+        WebServer.removePendingOrder(orderId);
+        this.io.emit('pendingOrder:cancelled', { orderId });
+        res.json({ success: true, orderId });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to cancel order' });
+      }
+    });
+
     // API: Reset only balance (keep trades history)
     this.app.post('/api/account/reset', async (_req: Request, res: Response) => {
       try {
@@ -487,10 +528,61 @@ export class WebServer {
         // Emit recent AI decisions - ridotto a 5 per performance
         const recentDecisions = await dbService.getRecentDecisions(5);
         this.io.emit('decisions:update', recentDecisions);
+
+        // Emit pending orders con prezzo aggiornato
+        const pendingOrders = WebServer.getPendingOrders();
+        for (const order of pendingOrders) {
+          try {
+            order.currentPrice = await hyperliquidService.getTickerPrice(order.symbol);
+          } catch {
+            // Keep previous price if fetch fails
+          }
+        }
+        this.io.emit('pendingOrders:update', pendingOrders);
       } catch (error) {
         logger.error('Failed to broadcast stats update', error);
       }
     }, 1000); // Every 1 second - real-time updates
+  }
+
+  /**
+   * Add a pending order (static method for access from tradeLoop)
+   */
+  public static addPendingOrder(order: PendingOrder): void {
+    WebServer.pendingOrders.set(order.id, order);
+    logger.info('Pending order added', { id: order.id, symbol: order.symbol, side: order.side, limitPrice: order.limitPrice });
+  }
+
+  /**
+   * Update pending order status
+   */
+  public static updatePendingOrder(orderId: string, updates: Partial<PendingOrder>): void {
+    const order = WebServer.pendingOrders.get(orderId);
+    if (order) {
+      Object.assign(order, updates);
+    }
+  }
+
+  /**
+   * Remove pending order (when filled or cancelled)
+   */
+  public static removePendingOrder(orderId: string): void {
+    WebServer.pendingOrders.delete(orderId);
+    logger.info('Pending order removed', { id: orderId });
+  }
+
+  /**
+   * Get all pending orders
+   */
+  public static getPendingOrders(): PendingOrder[] {
+    return Array.from(WebServer.pendingOrders.values());
+  }
+
+  /**
+   * Clear all pending orders
+   */
+  public static clearPendingOrders(): void {
+    WebServer.pendingOrders.clear();
   }
 
   /**

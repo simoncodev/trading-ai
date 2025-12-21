@@ -1,11 +1,113 @@
 import { logger } from '../core/logger';
 import { orderBookAnalyzer, OrderBookAnalysis } from '../services/orderBookAnalyzer';
 import { adaptiveParams } from '../services/adaptiveParameters';
+import { marketDataService } from '../services/marketDataService';
+import { indicatorService } from './indicators';
 
 /**
  * Order Book Trading Strategy - Pure order book based trading
  * Now with ADAPTIVE PARAMETERS based on market regime
+ * + MACRO TREND FILTER to avoid counter-trend trades
  */
+
+// ========================================
+// MACRO TREND TRACKING
+// ========================================
+interface MacroTrend {
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  strength: number; // 0-100
+  lastUpdate: number;
+  priceChange1h: number;
+  priceChange4h: number;
+}
+
+const macroTrendCache: Map<string, MacroTrend> = new Map();
+const MACRO_TREND_CACHE_TTL = 60000; // 1 minute cache
+
+/**
+ * Get macro trend for a symbol
+ * Uses EMA crossovers and price change to determine trend
+ */
+async function getMacroTrend(symbol: string): Promise<MacroTrend> {
+  const cached = macroTrendCache.get(symbol);
+  if (cached && Date.now() - cached.lastUpdate < MACRO_TREND_CACHE_TTL) {
+    return cached;
+  }
+
+  try {
+    const candles = await marketDataService.getCandles(symbol, '1m', 240); // 4 ore di dati
+    if (!candles || candles.length < 60) {
+      return { direction: 'NEUTRAL', strength: 0, lastUpdate: Date.now(), priceChange1h: 0, priceChange4h: 0 };
+    }
+
+    const currentPrice = candles[candles.length - 1].close;
+    
+    // Price change 1h (60 candele da 1min)
+    const price1hAgo = candles[Math.max(0, candles.length - 60)].close;
+    const priceChange1h = ((currentPrice - price1hAgo) / price1hAgo) * 100;
+    
+    // Price change 4h (240 candele da 1min)
+    const price4hAgo = candles[0].close;
+    const priceChange4h = ((currentPrice - price4hAgo) / price4hAgo) * 100;
+
+    // Get multi-timeframe indicators for EMA trend
+    const multiTf = await indicatorService.getMultiTimeframeIndicators(candles, currentPrice);
+    
+    // Calculate trend strength
+    let bullishSignals = 0;
+    let bearishSignals = 0;
+
+    // EMA trends
+    if (multiTf.ema.scalping.trend === 'bullish') bullishSignals++;
+    else if (multiTf.ema.scalping.trend === 'bearish') bearishSignals++;
+    
+    if (multiTf.ema.standard.trend === 'bullish') bullishSignals++;
+    else if (multiTf.ema.standard.trend === 'bearish') bearishSignals++;
+    
+    if (multiTf.ema.swing.trend === 'bullish') bullishSignals++;
+    else if (multiTf.ema.swing.trend === 'bearish') bearishSignals++;
+
+    // MACD
+    if (multiTf.macd.standard.histogram > 0) bullishSignals++;
+    else bearishSignals++;
+
+    // Price change direction
+    if (priceChange1h > 0.1) bullishSignals++;
+    else if (priceChange1h < -0.1) bearishSignals++;
+    
+    if (priceChange4h > 0.2) bullishSignals++;
+    else if (priceChange4h < -0.2) bearishSignals++;
+
+    // Determine direction and strength
+    let direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+    let strength = 0;
+
+    const totalSignals = bullishSignals + bearishSignals;
+    if (totalSignals > 0) {
+      if (bullishSignals > bearishSignals + 1) {
+        direction = 'BULLISH';
+        strength = (bullishSignals / 6) * 100; // 6 total possible signals
+      } else if (bearishSignals > bullishSignals + 1) {
+        direction = 'BEARISH';
+        strength = (bearishSignals / 6) * 100;
+      }
+    }
+
+    const trend: MacroTrend = {
+      direction,
+      strength,
+      lastUpdate: Date.now(),
+      priceChange1h,
+      priceChange4h,
+    };
+
+    macroTrendCache.set(symbol, trend);
+    return trend;
+  } catch (error) {
+    logger.warn(`Failed to get macro trend for ${symbol}`, { error: String(error) });
+    return { direction: 'NEUTRAL', strength: 0, lastUpdate: Date.now(), priceChange1h: 0, priceChange4h: 0 };
+  }
+}
 
 export interface OrderBookSignal {
   decision: 'BUY' | 'SELL' | 'HOLD';
@@ -17,23 +119,27 @@ export interface OrderBookSignal {
 
 // Static config (non-adaptive)
 const STATIC_CONFIG = {
-  // Wall detection
-  WALL_DISTANCE_THRESHOLD: 0.20,     // Wall within 0.20% = significant
+  // Wall detection - più stringente
+  WALL_DISTANCE_THRESHOLD: 0.15,     // Wall within 0.15% = molto significativo
 
-  // Confidence boosts
-  WALL_CONFIDENCE_BOOST: 0.10,       // +10% confidence if wall supports trade
-  PRESSURE_CONFIDENCE_BOOST: 0.08,   // +8% confidence if pressure aligns
-  MOMENTUM_CONFIDENCE_BOOST: 0.07,   // +7% confidence if momentum aligns
+  // Confidence boosts - aumentati
+  WALL_CONFIDENCE_BOOST: 0.12,       // +12% confidence if wall supports trade
+  PRESSURE_CONFIDENCE_BOOST: 0.10,   // +10% confidence if pressure aligns
+  MOMENTUM_CONFIDENCE_BOOST: 0.10,   // +10% confidence if momentum aligns
+  
+  // CONFLUENZE MINIME RICHIESTE
+  MIN_CONFLUENCES_FOR_TRADE: 3,      // Almeno 3 segnali allineati
 };
-// Fallback config (used if adaptive params not available)
-// OPTIMIZED: Higher confidence threshold
+
+// Fallback config - ELITE SCALPER SETTINGS
+// REGOLA: Solo setup A+ con alta probabilità
 const FALLBACK_CONFIG = {
-  STRONG_IMBALANCE_THRESHOLD: 0.35,
-  WEAK_IMBALANCE_THRESHOLD: 0.22,
-  MAX_SPREAD_PERCENT: 0.12,
-  MIN_LIQUIDITY_SCORE: 45,
-  PRESSURE_THRESHOLD: 0.58,
-  MIN_TRADE_CONFIDENCE: 0.70,  // Raised from 0.55 to avoid marginal trades
+  STRONG_IMBALANCE_THRESHOLD: 0.45,   // Aumentato: serve imbalance forte
+  WEAK_IMBALANCE_THRESHOLD: 0.30,     // Aumentato: evita segnali deboli
+  MAX_SPREAD_PERCENT: 0.08,           // Ridotto: solo mercati liquidi
+  MIN_LIQUIDITY_SCORE: 60,            // Aumentato: serve liquidità alta
+  PRESSURE_THRESHOLD: 0.65,           // Aumentato: serve pressione chiara
+  MIN_TRADE_CONFIDENCE: 0.80,         // CRITICO: Solo trade ad alta confidence
 };
 
 
@@ -106,35 +212,56 @@ export async function generateOrderBookSignal(symbol: string): Promise<OrderBook
     // Key: "Trade only when market is out of balance"
     // ========================================
 
-    // CONSOLIDATION: DO NOT TRADE
+    // CONSOLIDATION: ASSOLUTAMENTE NON TRADARE
     if (analysis.marketState === 'CONSOLIDATION') {
       return {
         decision: 'HOLD',
         confidence: 0,
-        reasoning: `[CONSOLIDATION] Evitare trading - mercato bilanciato senza direzione`,
+        reasoning: `🚫 [CONSOLIDATION] NO TRADE - mercato senza direzione, aspetta breakout`,
         orderBookData: analysis,
         regime: config.regime,
       };
     }
 
-    // ABSORPTION DETECTED: Potential reversal - be cautious
+    // BALANCED: Evita anche questo - aspetta imbalance
+    if (analysis.marketState === 'BALANCED' && !analysis.breakoutConfirmed) {
+      return {
+        decision: 'HOLD',
+        confidence: 0,
+        reasoning: `⏸️ [BALANCED] NO TRADE - aspetta conferma breakout o imbalance`,
+        orderBookData: analysis,
+        regime: config.regime,
+      };
+    }
+
+    // ABSORPTION DETECTED: Potential reversal - NON ENTRARE
     if (analysis.absorptionDetected) {
       logger.warn(`⚠️ [${symbol}] ABSORPTION DETECTED - Big orders no follow-through`);
       return {
         decision: 'HOLD',
         confidence: 0,
-        reasoning: `[ABSORPTION] Grandi ordini senza follow-through - possibile inversione`,
+        reasoning: `🧱 [ABSORPTION] NO TRADE - ordini grandi assorbiti, possibile inversione`,
         orderBookData: analysis,
         regime: config.regime,
       };
     }
 
-    // Check basic requirements (using adaptive params)
+    // ========================================
+    // MACRO TREND FILTER - CRITICAL
+    // Avoid counter-trend trades in strong trends
+    // ========================================
+    const macroTrend = await getMacroTrend(symbol);
+    logger.debug(`📈 [${symbol}] Macro Trend: ${macroTrend.direction} (${macroTrend.strength.toFixed(0)}%)`, {
+      priceChange1h: `${macroTrend.priceChange1h.toFixed(2)}%`,
+      priceChange4h: `${macroTrend.priceChange4h.toFixed(2)}%`,
+    });
+
+    // Check basic requirements (using adaptive params) - PIÙ STRINGENTI
     if (analysis.spread > config.maxSpread) {
       return {
         decision: 'HOLD',
         confidence: 0,
-        reasoning: `Spread troppo alto (${analysis.spread.toFixed(4)}% > ${config.maxSpread}%)`,
+        reasoning: `📊 Spread troppo alto (${analysis.spread.toFixed(4)}% > ${config.maxSpread}%) - mercato illiquido`,
         orderBookData: analysis,
         regime: config.regime,
       };
@@ -144,11 +271,18 @@ export async function generateOrderBookSignal(symbol: string): Promise<OrderBook
       return {
         decision: 'HOLD',
         confidence: 0,
-        reasoning: `Liquidità insufficiente (${analysis.liquidityScore} < ${config.minLiquidity})`,
+        reasoning: `💧 Liquidità bassa (${analysis.liquidityScore} < ${config.minLiquidity}) - rischio slippage`,
         orderBookData: analysis,
         regime: config.regime,
       };
     }
+
+    // ========================================
+    // SISTEMA CONFLUENZE - SCALPER ELITE
+    // Conta quanti segnali sono allineati
+    // ========================================
+    let confluences = 0;
+    const confluenceDetails: string[] = [];
 
     // Analyze imbalance
     const imbalance = analysis.imbalanceRatio;
@@ -163,134 +297,310 @@ export async function generateOrderBookSignal(symbol: string): Promise<OrderBook
     reasons.push(`[${config.regime}]`);
 
     // ========================================
-    // IMBALANCED MARKET - TREND FOLLOWING MODE
-    // Key: "In uptrend only BUY, in downtrend only SELL"
+    // SOLO IMBALANCED MARKET - TREND FOLLOWING
+    // "In uptrend only BUY, in downtrend only SELL"
     // ========================================
     if (analysis.marketState === 'IMBALANCED_UP' || analysis.marketState === 'IMBALANCED_DOWN') {
       const expectedDirection = analysis.marketState === 'IMBALANCED_UP' ? 'BUY' : 'SELL';
 
-      // Strong signal: Market state + imbalance + aggression aligned
+      // CONFLUENZA 1: Market State (già verificato)
+      confluences++;
+      confluenceDetails.push(`✅ Market State: ${analysis.marketState}`);
+
+      // CONFLUENZA 2: Imbalance forte nella direzione giusta
       if (absImbalance >= config.weakImbalance) {
         const imbalanceDirection = imbalance > 0 ? 'BUY' : 'SELL';
 
-        // Only trade in direction of market state
         if (imbalanceDirection === expectedDirection) {
-          decision = expectedDirection;
-          // Base confidence higher in imbalanced market
-          confidence = 0.55 + (absImbalance - config.weakImbalance) * 0.8;
-          reasons.push(`📈 TREND MODE: ${expectedDirection} allineato con market state`);
+          // ⚠️ CRITICAL CHECK: Aggression must NOT be strongly opposite
+          const aggressionOpposed =
+            (expectedDirection === 'BUY' && analysis.aggressionScore < -0.30) ||
+            (expectedDirection === 'SELL' && analysis.aggressionScore > 0.30);
 
-          // Aggression bonus
+          if (aggressionOpposed) {
+            logger.warn(`⛔ [${symbol}] IMBALANCED REJECTED - Aggression strongly OPPOSED (${(analysis.aggressionScore * 100).toFixed(0)}%)`, {
+              expectedDirection,
+              aggressionScore: analysis.aggressionScore,
+              marketState: analysis.marketState,
+            });
+            return {
+              decision: 'HOLD',
+              confidence: 0,
+              reasoning: `⛔ IMBALANCED ${analysis.marketState} REJECTED - Aggression ${(analysis.aggressionScore * 100).toFixed(0)}% strongly OPPOSED`,
+              orderBookData: analysis,
+              regime: config.regime,
+            };
+          }
+
+          confluences++;
+          confluenceDetails.push(`✅ Imbalance: ${(imbalance * 100).toFixed(1)}% verso ${expectedDirection}`);
+          
+          decision = expectedDirection;
+          // Base confidence più alta in mercato imbalanced
+          confidence = 0.60 + (absImbalance - config.weakImbalance) * 0.6;
+          reasons.push(`📈 TREND: ${expectedDirection}`);
+
+          // CONFLUENZA 3: Aggression allineata
           const aggressionAligns =
-            (decision === 'BUY' && analysis.aggressionScore > 0.2) ||
-            (decision === 'SELL' && analysis.aggressionScore < -0.2);
+            (decision === 'BUY' && analysis.aggressionScore > 0.25) ||
+            (decision === 'SELL' && analysis.aggressionScore < -0.25);
 
           if (aggressionAligns) {
-            confidence += 0.12;
-            reasons.push(`🔥 Aggression confirms: ${(analysis.aggressionScore * 100).toFixed(0)}%`);
+            confluences++;
+            confluenceDetails.push(`✅ Aggression: ${(analysis.aggressionScore * 100).toFixed(0)}%`);
+            confidence += 0.10;
+            reasons.push(`🔥 Aggression confirms`);
           }
 
-          // Breakout confirmation bonus (second drive)
-          if (analysis.breakoutConfirmed) {
-            confidence += 0.15;
-            reasons.push(`✅ SECOND DRIVE CONFIRMED - alta probabilità`);
+          // CONFLUENZA 4: Pressure allineata
+          const pressureAligns =
+            (decision === 'BUY' && analysis.bidPressure > analysis.askPressure + 0.1) ||
+            (decision === 'SELL' && analysis.askPressure > analysis.bidPressure + 0.1);
+
+          if (pressureAligns) {
+            confluences++;
+            confluenceDetails.push(`✅ Pressure: Bid ${(analysis.bidPressure * 100).toFixed(0)}% vs Ask ${(analysis.askPressure * 100).toFixed(0)}%`);
+            confidence += STATIC_CONFIG.PRESSURE_CONFIDENCE_BOOST;
           }
+
+          // CONFLUENZA 5: Breakout confirmed (second drive)
+          if (analysis.breakoutConfirmed) {
+            confluences++;
+            confluenceDetails.push(`✅ Second Drive CONFIRMED`);
+            confidence += 0.15;
+            reasons.push(`🎯 SECOND DRIVE - alta probabilità`);
+          }
+
+          // CONFLUENZA 6: Wall support
+          if (decision === 'BUY' && analysis.nearestBidWall &&
+            analysis.nearestBidWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
+            confluences++;
+            confluenceDetails.push(`✅ Wall supporto @ $${analysis.nearestBidWall.price.toFixed(2)}`);
+            confidence += STATIC_CONFIG.WALL_CONFIDENCE_BOOST;
+          }
+          if (decision === 'SELL' && analysis.nearestAskWall &&
+            analysis.nearestAskWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
+            confluences++;
+            confluenceDetails.push(`✅ Wall resistenza @ $${analysis.nearestAskWall.price.toFixed(2)}`);
+            confidence += STATIC_CONFIG.WALL_CONFIDENCE_BOOST;
+          }
+
+          // CONFLUENZA 7: Low Volume Node
+          if (analysis.lowVolumeNode) {
+            confluences++;
+            confluenceDetails.push(`✅ LVN @ $${analysis.lowVolumeNode.price.toFixed(2)}`);
+            confidence += 0.08;
+          }
+
         } else {
-          reasons.push(`⚠️ Imbalance opposto a market state - SKIP`);
-        }
-      }
-    }
-    // ========================================
-    // BALANCED MARKET - MEAN REVERSION / CAUTIOUS
-    // Key: "Wait for second breakout confirmation"
-    // ========================================
-    else if (analysis.marketState === 'BALANCED') {
-      // In balanced market, ONLY trade if breakout is confirmed
-      if (!analysis.breakoutConfirmed) {
-        // Check for strong imbalance that might indicate early breakout
-        if (absImbalance >= config.strongImbalance) {
-          reasons.push(`⏳ Imbalance forte ma attesa conferma second drive`);
-          // Give a smaller signal for potential breakout
-          const potentialDirection = imbalance > 0 ? 'BUY' : 'SELL';
-          decision = potentialDirection;
-          confidence = 0.45 + (absImbalance - config.strongImbalance) * 0.5;
-          reasons.push(`Imbalance ${(imbalance * 100).toFixed(1)}% - confidence ridotta (no confirm)`);
+          reasons.push(`⛔ Imbalance opposto a market state - NO TRADE`);
+          decision = 'HOLD';
+          confidence = 0;
         }
       } else {
-        // Breakout confirmed in balanced market = good setup
-        decision = imbalance > 0 ? 'BUY' : 'SELL';
-        confidence = 0.60 + absImbalance * 0.4;
-        reasons.push(`🎯 BREAKOUT CONFIRMED in balanced market`);
+        reasons.push(`⚠️ Imbalance troppo debole (${(absImbalance * 100).toFixed(1)}% < ${(config.weakImbalance * 100).toFixed(0)}%)`);
       }
     }
+    // ========================================
+    // BALANCED CON BREAKOUT CONFIRMED - Entry cauto
+    // ========================================
+    else if (analysis.marketState === 'BALANCED' && analysis.breakoutConfirmed) {
+      decision = imbalance > 0 ? 'BUY' : 'SELL';
+      confidence = 0.65 + absImbalance * 0.3;
+      confluences = 2; // Breakout + direction
+      confluenceDetails.push(`✅ Breakout confirmed in balanced`);
+      confluenceDetails.push(`✅ Direction: ${decision}`);
+      reasons.push(`🎯 BREAKOUT CONFIRMED - entry cauto`);
 
-    // ========================================
-    // ADDITIONAL CONFIDENCE MODIFIERS
-    // ========================================
-    if (decision !== 'HOLD') {
-      // Wall support/resistance bonus
+      // ⚠️ CRITICAL CHECK: Aggression must NOT be opposite to decision
+      // Se l'aggression è fortemente opposta, il breakout è falso!
+      const aggressionOpposed =
+        (decision === 'BUY' && analysis.aggressionScore < -0.20) ||
+        (decision === 'SELL' && analysis.aggressionScore > 0.20);
+
+      if (aggressionOpposed) {
+        logger.warn(`⛔ [${symbol}] BALANCED BREAKOUT REJECTED - Aggression OPPOSED (${(analysis.aggressionScore * 100).toFixed(0)}%)`, {
+          decision,
+          aggressionScore: analysis.aggressionScore,
+        });
+        return {
+          decision: 'HOLD',
+          confidence: 0,
+          reasoning: `⛔ BALANCED BREAKOUT REJECTED - Aggression ${(analysis.aggressionScore * 100).toFixed(0)}% OPPOSED to ${decision}`,
+          orderBookData: analysis,
+          regime: config.regime,
+        };
+      }
+
+      // Aggiungi confluenze extra per BALANCED BREAKOUT (stesso check degli IMBALANCED)
+      // CONFLUENZA 3: Aggression allineata
+      const aggressionAligns =
+        (decision === 'BUY' && analysis.aggressionScore > 0.25) ||
+        (decision === 'SELL' && analysis.aggressionScore < -0.25);
+
+      if (aggressionAligns) {
+        confluences++;
+        confluenceDetails.push(`✅ Aggression: ${(analysis.aggressionScore * 100).toFixed(0)}%`);
+        confidence += 0.10;
+        reasons.push(`🔥 Aggression confirms`);
+      }
+
+      // CONFLUENZA 4: Pressure allineata
+      const pressureAligns =
+        (decision === 'BUY' && analysis.bidPressure > analysis.askPressure + 0.1) ||
+        (decision === 'SELL' && analysis.askPressure > analysis.bidPressure + 0.1);
+
+      if (pressureAligns) {
+        confluences++;
+        confluenceDetails.push(`✅ Pressure: Bid ${(analysis.bidPressure * 100).toFixed(0)}% vs Ask ${(analysis.askPressure * 100).toFixed(0)}%`);
+        confidence += STATIC_CONFIG.PRESSURE_CONFIDENCE_BOOST;
+      }
+
+      // CONFLUENZA 5: Wall support
       if (decision === 'BUY' && analysis.nearestBidWall &&
         analysis.nearestBidWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
+        confluences++;
+        confluenceDetails.push(`✅ Wall supporto @ $${analysis.nearestBidWall.price.toFixed(2)}`);
         confidence += STATIC_CONFIG.WALL_CONFIDENCE_BOOST;
-        reasons.push(`Wall supporto: $${analysis.nearestBidWall.price.toFixed(2)}`);
       }
       if (decision === 'SELL' && analysis.nearestAskWall &&
         analysis.nearestAskWall.distancePercent < STATIC_CONFIG.WALL_DISTANCE_THRESHOLD) {
+        confluences++;
+        confluenceDetails.push(`✅ Wall resistenza @ $${analysis.nearestAskWall.price.toFixed(2)}`);
         confidence += STATIC_CONFIG.WALL_CONFIDENCE_BOOST;
-        reasons.push(`Wall resistenza: $${analysis.nearestAskWall.price.toFixed(2)}`);
       }
 
-      // Low Volume Node - high probability entry zone
+      // CONFLUENZA 6: Low Volume Node
       if (analysis.lowVolumeNode) {
+        confluences++;
+        confluenceDetails.push(`✅ LVN @ $${analysis.lowVolumeNode.price.toFixed(2)}`);
         confidence += 0.08;
-        reasons.push(`📍 LVN detected @ $${analysis.lowVolumeNode.price.toFixed(2)}`);
       }
+    }
 
-      // Momentum check
+    // ========================================
+    // MOMENTUM CHECK - CRITICO
+    // ========================================
+    if (decision !== 'HOLD') {
       const momentum = orderBookAnalyzer.getImbalanceMomentum(symbol);
-      const momentumAligns =
-        (decision === 'BUY' && momentum > 0.05) ||
-        (decision === 'SELL' && momentum < -0.05);
-
+      
+      // Momentum OPPOSTO = KILL THE TRADE
       const momentumOpposed =
-        (decision === 'BUY' && momentum < -0.10) ||
-        (decision === 'SELL' && momentum > 0.10);
+        (decision === 'BUY' && momentum < -0.15) ||
+        (decision === 'SELL' && momentum > 0.15);
 
       if (momentumOpposed) {
-        confidence -= 0.15; // Stronger penalty
-        reasons.push(`⚠️ Momentum contrario (${(momentum * 100).toFixed(1)}%)`);
-      } else if (momentumAligns) {
+        logger.warn(`⛔ [${symbol}] Momentum OPPOSTO - TRADE KILLED`, { momentum });
+        return {
+          decision: 'HOLD',
+          confidence: 0,
+          reasoning: `⛔ MOMENTUM CONTRARIO (${(momentum * 100).toFixed(1)}%) - Trade annullato`,
+          orderBookData: analysis,
+          regime: config.regime,
+        };
+      }
+
+      // Momentum allineato = bonus
+      const momentumAligns =
+        (decision === 'BUY' && momentum > 0.08) ||
+        (decision === 'SELL' && momentum < -0.08);
+
+      if (momentumAligns) {
+        confluences++;
+        confluenceDetails.push(`✅ Momentum: ${(momentum * 100).toFixed(1)}%`);
         confidence += STATIC_CONFIG.MOMENTUM_CONFIDENCE_BOOST;
-        reasons.push(`Momentum ${momentum > 0 ? '+' : ''}${(momentum * 100).toFixed(1)}%`);
+        reasons.push(`📊 Momentum +${(momentum * 100).toFixed(1)}%`);
+      }
+    }
+
+    // ========================================
+    // MACRO TREND FILTER - BLOCK COUNTER-TREND
+    // ========================================
+    if (decision !== 'HOLD' && macroTrend.strength >= 50) {
+      // Strong bearish trend - block BUY
+      if (macroTrend.direction === 'BEARISH' && decision === 'BUY') {
+        logger.warn(`⛔ [${symbol}] MACRO TREND BEARISH (${macroTrend.strength.toFixed(0)}%) - BUY BLOCKED`, {
+          priceChange1h: `${macroTrend.priceChange1h.toFixed(2)}%`,
+          priceChange4h: `${macroTrend.priceChange4h.toFixed(2)}%`,
+        });
+        return {
+          decision: 'HOLD',
+          confidence: 0,
+          reasoning: `⛔ MACRO TREND BEARISH (${macroTrend.strength.toFixed(0)}%) - Non comprare in downtrend (1h: ${macroTrend.priceChange1h.toFixed(2)}%, 4h: ${macroTrend.priceChange4h.toFixed(2)}%)`,
+          orderBookData: analysis,
+          regime: config.regime,
+        };
+      }
+      
+      // Strong bullish trend - block SELL
+      if (macroTrend.direction === 'BULLISH' && decision === 'SELL') {
+        logger.warn(`⛔ [${symbol}] MACRO TREND BULLISH (${macroTrend.strength.toFixed(0)}%) - SELL BLOCKED`, {
+          priceChange1h: `${macroTrend.priceChange1h.toFixed(2)}%`,
+          priceChange4h: `${macroTrend.priceChange4h.toFixed(2)}%`,
+        });
+        return {
+          decision: 'HOLD',
+          confidence: 0,
+          reasoning: `⛔ MACRO TREND BULLISH (${macroTrend.strength.toFixed(0)}%) - Non shortare in uptrend (1h: ${macroTrend.priceChange1h.toFixed(2)}%, 4h: ${macroTrend.priceChange4h.toFixed(2)}%)`,
+          orderBookData: analysis,
+          regime: config.regime,
+        };
       }
 
-      // Pressure alignment
-      const pressureAligns =
-        (decision === 'BUY' && analysis.bidPressure > analysis.askPressure) ||
-        (decision === 'SELL' && analysis.askPressure > analysis.bidPressure);
-
-      if (pressureAligns) {
-        confidence += STATIC_CONFIG.PRESSURE_CONFIDENCE_BOOST;
+      // Trend allineato - bonus confluenza
+      if ((macroTrend.direction === 'BULLISH' && decision === 'BUY') ||
+          (macroTrend.direction === 'BEARISH' && decision === 'SELL')) {
+        confluences++;
+        confluenceDetails.push(`✅ Macro Trend: ${macroTrend.direction} (${macroTrend.strength.toFixed(0)}%)`);
+        confidence += 0.05;
+        reasons.push(`📈 TREND ALIGNED`);
       }
+    }
+
+    // ========================================
+    // VERIFICA CONFLUENZE MINIME
+    // ========================================
+    if (decision !== 'HOLD' && confluences < STATIC_CONFIG.MIN_CONFLUENCES_FOR_TRADE) {
+      logger.info(`⚠️ [${symbol}] Solo ${confluences}/${STATIC_CONFIG.MIN_CONFLUENCES_FOR_TRADE} confluenze - NO TRADE`, {
+        confluenceCount: confluences,
+        details: confluenceDetails.join(', '),
+      });
+      return {
+        decision: 'HOLD',
+        confidence: 0,
+        reasoning: `⚠️ Solo ${confluences}/${STATIC_CONFIG.MIN_CONFLUENCES_FOR_TRADE} confluenze: ${confluenceDetails.join(', ')}`,
+        orderBookData: analysis,
+        regime: config.regime,
+      };
     }
 
     // Cap confidence at 0.95
     confidence = Math.min(0.95, confidence);
 
-    // Require minimum confidence to trade (adaptive)
+    // ========================================
+    // FILTRO FINALE - CONFIDENCE MINIMA ELITE
+    // ========================================
     if (decision !== 'HOLD' && confidence < config.minConfidence) {
-      reasons.push(`Confidence troppo bassa (${(confidence * 100).toFixed(0)}% < ${(config.minConfidence * 100).toFixed(0)}%)`);
+      logger.info(`⚠️ [${symbol}] Confidence troppo bassa: ${(confidence * 100).toFixed(0)}% < ${(config.minConfidence * 100).toFixed(0)}%`);
+      reasons.push(`❌ Confidence insufficiente`);
       decision = 'HOLD';
+      confidence = 0;
     }
 
     const reasoning = reasons.join(' | ');
 
-    logger.info(`📈 [${symbol}] Order Book Signal: ${decision}`, {
-      confidencePercent: `${(confidence * 100).toFixed(0)}%`,
-      regime: config.regime,
-      marketState: analysis.marketState,
-      reasoning: reasoning.substring(0, 100),
-    });
+    // Log dettagliato per trade validi
+    if (decision !== 'HOLD') {
+      logger.info(`🎯 [${symbol}] SETUP A+ TROVATO: ${decision}`, {
+        confidencePercent: `${(confidence * 100).toFixed(0)}%`,
+        confluenceCount: `${confluences}/${STATIC_CONFIG.MIN_CONFLUENCES_FOR_TRADE}+`,
+        details: confluenceDetails.join(', '),
+        regime: config.regime,
+        marketState: analysis.marketState,
+      });
+    } else {
+      logger.debug(`📊 [${symbol}] No trade: ${reasoning.substring(0, 80)}`);
+    }
 
     return {
       decision,

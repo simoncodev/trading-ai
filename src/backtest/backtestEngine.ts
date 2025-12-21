@@ -5,6 +5,20 @@ import { AIPromptContext, Candle, Indicators, MultiTimeframeIndicators } from '.
 import { logger } from '../core/logger';
 import { EventEmitter } from 'events';
 
+/**
+ * BACKTEST ENGINE - ALIGNED WITH LIVE TRADING
+ * 
+ * This backtest uses the SAME parameters and logic as live trading:
+ * - Same SL/TP percentages (8%/4% default)
+ * - Same trailing stop logic
+ * - Same confidence thresholds (70%+)
+ * - Same indicator-based decisions (approximating order book signals)
+ * - Same smart exit logic (using indicator reversals)
+ * 
+ * NOTE: Order book data is not available historically, so we use
+ * multi-timeframe indicators to approximate order book signals.
+ */
+
 export interface BacktestConfig {
   symbol: string;
   startDate: Date;
@@ -12,9 +26,9 @@ export interface BacktestConfig {
   initialBalance: number;
   leverage: number;
   takerFee: number;
-  slPercent: number;
-  tpPercent: number;
-  useAI: boolean; // true = AI decisions, false = indicator-based
+  slPercent: number;  // Default: 8% (matches positionManager)
+  tpPercent: number;  // Default: 4% (matches positionManager)
+  useAI: boolean;
 }
 
 export interface BacktestTrade {
@@ -30,7 +44,7 @@ export interface BacktestTrade {
   pnl: number;
   pnlPercent: number;
   fees: number;
-  exitReason: 'tp' | 'sl' | 'signal' | 'end';
+  exitReason: 'tp' | 'sl' | 'trailing' | 'smart_exit' | 'signal' | 'end';
   aiConfidence?: number;
   aiReasoning?: string;
 }
@@ -67,6 +81,28 @@ interface SimpleDecision {
   reasoning: string;
 }
 
+// ========================================
+// PARAMETERS ALIGNED WITH LIVE TRADING
+// (from positionManager.ts and adaptiveParameters.ts)
+// ========================================
+const LIVE_ALIGNED_PARAMS = {
+  // From positionManager.ts
+  DEFAULT_STOP_LOSS_PERCENT: 8.0,
+  DEFAULT_TAKE_PROFIT_PERCENT: 4.0,
+  TRAILING_STOP_ACTIVATION_PERCENT: 1.5,
+  TRAILING_STOP_DISTANCE_PERCENT: 1.0,
+  MAX_POSITION_AGE_CANDLES: 60, // 60 minutes in 1-min candles
+
+  // From adaptiveParameters.ts
+  MIN_TRADE_CONFIDENCE: 0.70,  // 70% minimum
+
+  // Smart exit thresholds (approximating order book reversals with indicators)
+  SMART_EXIT_MIN_PROFIT_PERCENT: 0.5,
+  RSI_REVERSAL_OVERBOUGHT: 75,
+  RSI_REVERSAL_OVERSOLD: 25,
+  MOMENTUM_REVERSAL_THRESHOLD: 0.15,
+};
+
 export class BacktestEngine extends EventEmitter {
   private sdk: Hyperliquid;
   private shouldStop = false;
@@ -82,19 +118,28 @@ export class BacktestEngine extends EventEmitter {
     this.shouldStop = false;
     const startTime = Date.now();
 
-    logger.info(`Starting backtest for ${config.symbol}`, {
-      startDate: config.startDate.toISOString(),
-      endDate: config.endDate.toISOString(),
-      initialBalance: config.initialBalance,
+    // Use live-aligned defaults if user provided standard values
+    const alignedConfig = {
+      ...config,
+      slPercent: config.slPercent || LIVE_ALIGNED_PARAMS.DEFAULT_STOP_LOSS_PERCENT,
+      tpPercent: config.tpPercent || LIVE_ALIGNED_PARAMS.DEFAULT_TAKE_PROFIT_PERCENT,
+    };
+
+    logger.info(`Starting ALIGNED backtest for ${alignedConfig.symbol}`, {
+      startDate: alignedConfig.startDate.toISOString(),
+      endDate: alignedConfig.endDate.toISOString(),
+      initialBalance: alignedConfig.initialBalance,
+      slPercent: alignedConfig.slPercent,
+      tpPercent: alignedConfig.tpPercent,
+      leverage: alignedConfig.leverage,
     });
 
     this.emit('status', { status: 'downloading', message: 'Downloading historical data...' });
 
-    // Download historical candles
     const candles = await this.downloadHistoricalCandles(
-      config.symbol,
-      config.startDate,
-      config.endDate
+      alignedConfig.symbol,
+      alignedConfig.startDate,
+      alignedConfig.endDate
     );
 
     if (candles.length < 100) {
@@ -104,12 +149,10 @@ export class BacktestEngine extends EventEmitter {
     logger.info(`Downloaded ${candles.length} candles`);
     this.emit('status', { status: 'running', message: `Processing ${candles.length} candles...` });
 
-    // Run simulation
-    const result = await this.simulate(config, candles);
-    
+    const result = await this.simulate(alignedConfig, candles);
     result.duration = Date.now() - startTime;
 
-    logger.info('Backtest completed', {
+    logger.info('ALIGNED backtest completed', {
       trades: result.metrics.totalTrades,
       winRate: result.metrics.winRate.toFixed(2),
       netPnL: result.metrics.netPnL.toFixed(2),
@@ -130,8 +173,8 @@ export class BacktestEngine extends EventEmitter {
     endDate: Date
   ): Promise<Candle[]> {
     const allCandles: Candle[] = [];
-    const interval = '1m';
-    const batchSize = 5000; // Max candles per request
+    const interval = '1m'; // 1-minute candles like live trading
+    const batchSize = 5000;
 
     let currentStart = startDate.getTime();
     const endTime = endDate.getTime();
@@ -157,8 +200,6 @@ export class BacktestEngine extends EventEmitter {
         }));
 
         allCandles.push(...candles);
-        
-        // Move to next batch
         currentStart = response[response.length - 1].t + 60000;
 
         this.emit('progress', {
@@ -167,7 +208,6 @@ export class BacktestEngine extends EventEmitter {
           message: `Downloaded ${allCandles.length} candles...`,
         });
 
-        // Rate limiting
         await this.sleep(100);
       } catch (error) {
         logger.error('Error downloading candles', { error });
@@ -181,13 +221,16 @@ export class BacktestEngine extends EventEmitter {
   private async simulate(config: BacktestConfig, candles: Candle[]): Promise<BacktestResult> {
     const trades: BacktestTrade[] = [];
     const equityCurve: { time: Date; equity: number }[] = [];
-    
+
     let balance = config.initialBalance;
     let position: {
       side: 'buy' | 'sell';
       entryPrice: number;
       quantity: number;
       entryTime: Date;
+      entryIndex: number;
+      highestPrice: number;  // For trailing stop
+      lowestPrice: number;   // For trailing stop
       aiConfidence?: number;
       aiReasoning?: string;
     } | null = null;
@@ -197,8 +240,10 @@ export class BacktestEngine extends EventEmitter {
     let maxDrawdown = 0;
     let aiCallCount = 0;
 
-    // Need at least 60 candles for indicators
-    const startIndex = 60;
+    // Track momentum for smart exit
+    let recentIndicators: { rsi: number; macdHist: number }[] = [];
+
+    const startIndex = 60; // Need candles for indicators
 
     for (let i = startIndex; i < candles.length; i++) {
       if (this.shouldStop) break;
@@ -208,7 +253,9 @@ export class BacktestEngine extends EventEmitter {
       const currentPrice = currentCandle.close;
       const currentTime = new Date(currentCandle.timestamp);
 
-      // Update equity curve
+      // ========================================
+      // EQUITY TRACKING
+      // ========================================
       let currentEquity = balance;
       if (position) {
         const unrealizedPnL = this.calculatePnL(
@@ -219,24 +266,31 @@ export class BacktestEngine extends EventEmitter {
           config.leverage
         );
         currentEquity = balance + unrealizedPnL;
+
+        // Update trailing stop prices
+        if (position.side === 'buy' && currentPrice > position.highestPrice) {
+          position.highestPrice = currentPrice;
+        } else if (position.side === 'sell' && currentPrice < position.lowestPrice) {
+          position.lowestPrice = currentPrice;
+        }
       }
 
-      // Track max drawdown
       if (currentEquity > maxEquity) maxEquity = currentEquity;
       const drawdown = maxEquity - currentEquity;
       if (drawdown > maxDrawdown) maxDrawdown = drawdown;
 
-      // Sample equity curve (every 60 candles = 1 hour)
       if (i % 60 === 0) {
         equityCurve.push({ time: currentTime, equity: currentEquity });
       }
 
-      // Check SL/TP if in position
+      // ========================================
+      // POSITION EXIT CHECKS (aligned with positionManager)
+      // ========================================
       if (position) {
-        const pnlPercent = ((currentPrice - position.entryPrice) / position.entryPrice) * 100 *
-          (position.side === 'buy' ? 1 : -1);
+        const pnlPercent = this.calculatePnLPercent(position, currentPrice, config.leverage);
+        const positionAge = i - position.entryIndex;
 
-        // Stop Loss
+        // 1. STOP LOSS (same as positionManager)
         if (pnlPercent <= -config.slPercent) {
           const trade = this.closePosition(
             position, currentPrice, currentTime, config, 'sl', ++tradeId
@@ -244,10 +298,11 @@ export class BacktestEngine extends EventEmitter {
           trades.push(trade);
           balance += trade.pnl - trade.fees;
           position = null;
+          recentIndicators = [];
           continue;
         }
 
-        // Take Profit
+        // 2. TAKE PROFIT (same as positionManager)
         if (pnlPercent >= config.tpPercent) {
           const trade = this.closePosition(
             position, currentPrice, currentTime, config, 'tp', ++tradeId
@@ -255,21 +310,104 @@ export class BacktestEngine extends EventEmitter {
           trades.push(trade);
           balance += trade.pnl - trade.fees;
           position = null;
+          recentIndicators = [];
+          continue;
+        }
+
+        // 3. TRAILING STOP (same as positionManager)
+        if (pnlPercent >= LIVE_ALIGNED_PARAMS.TRAILING_STOP_ACTIVATION_PERCENT) {
+          let trailingStopHit = false;
+
+          if (position.side === 'buy') {
+            const trailingStopPrice = position.highestPrice *
+              (1 - LIVE_ALIGNED_PARAMS.TRAILING_STOP_DISTANCE_PERCENT / 100);
+            if (currentPrice <= trailingStopPrice) {
+              trailingStopHit = true;
+            }
+          } else {
+            const trailingStopPrice = position.lowestPrice *
+              (1 + LIVE_ALIGNED_PARAMS.TRAILING_STOP_DISTANCE_PERCENT / 100);
+            if (currentPrice >= trailingStopPrice) {
+              trailingStopHit = true;
+            }
+          }
+
+          if (trailingStopHit) {
+            const trade = this.closePosition(
+              position, currentPrice, currentTime, config, 'trailing', ++tradeId
+            );
+            trades.push(trade);
+            balance += trade.pnl - trade.fees;
+            position = null;
+            recentIndicators = [];
+            continue;
+          }
+        }
+
+        // 4. SMART EXIT (approximating positionManager.checkSmartExit)
+        if (pnlPercent >= LIVE_ALIGNED_PARAMS.SMART_EXIT_MIN_PROFIT_PERCENT) {
+          try {
+            const indicators = await indicatorService.getIndicators(historicalCandles);
+
+            // Store for momentum tracking
+            recentIndicators.push({
+              rsi: indicators.rsi,
+              macdHist: indicators.macd.histogram
+            });
+            if (recentIndicators.length > 5) recentIndicators.shift();
+
+            const smartExitReason = this.checkSmartExit(
+              position.side,
+              indicators,
+              recentIndicators,
+              pnlPercent
+            );
+
+            if (smartExitReason) {
+              const trade = this.closePosition(
+                position, currentPrice, currentTime, config, 'smart_exit', ++tradeId
+              );
+              trade.aiReasoning = smartExitReason;
+              trades.push(trade);
+              balance += trade.pnl - trade.fees;
+              position = null;
+              recentIndicators = [];
+              continue;
+            }
+          } catch {
+            // Skip if indicator error
+          }
+        }
+
+        // 5. MAX POSITION AGE (fallback, like positionManager)
+        if (position && positionAge >= LIVE_ALIGNED_PARAMS.MAX_POSITION_AGE_CANDLES) {
+          const trade = this.closePosition(
+            position, currentPrice, currentTime, config, 'end', ++tradeId
+          );
+          trade.aiReasoning = `Time exit after ${positionAge} minutes`;
+          trades.push(trade);
+          balance += trade.pnl - trade.fees;
+          position = null;
+          recentIndicators = [];
           continue;
         }
       }
 
-      // Get trading decision (every 5 candles to save AI calls)
+      // ========================================
+      // ENTRY DECISION (every 5 candles, like live)
+      // ========================================
       if (i % 5 !== 0) continue;
 
       let decision: SimpleDecision;
 
       try {
-        // Calculate indicators
         const indicators = await indicatorService.getIndicators(historicalCandles);
-        const multiTfIndicators = await indicatorService.getMultiTimeframeIndicators(historicalCandles, currentPrice);
+        const multiTfIndicators = await indicatorService.getMultiTimeframeIndicators(
+          historicalCandles,
+          currentPrice
+        );
 
-        if (config.useAI && aiCallCount < 500) { // Limit AI calls
+        if (config.useAI && aiCallCount < 500) {
           decision = await this.getAIDecision(
             config.symbol,
             currentPrice,
@@ -286,52 +424,59 @@ export class BacktestEngine extends EventEmitter {
             current: i,
             total: candles.length,
             aiCalls: aiCallCount,
-            message: `Processing candle ${i}/${candles.length} (AI calls: ${aiCallCount})`,
+            message: `Processing ${i}/${candles.length} (AI: ${aiCallCount})`,
           });
         } else {
-          decision = this.getIndicatorDecision(multiTfIndicators, currentPrice);
-          
+          // Use indicator-based decision (approximating order book strategy)
+          decision = this.getAlignedDecision(indicators, multiTfIndicators, currentPrice);
+
           if (i % 100 === 0) {
             this.emit('progress', {
               type: 'indicator',
               current: i,
               total: candles.length,
-              message: `Processing candle ${i}/${candles.length}`,
+              message: `Processing ${i}/${candles.length}`,
             });
           }
         }
       } catch {
-        // Skip this candle if indicator calculation fails
         continue;
       }
 
-      // Execute decision
+      // ========================================
+      // ENTRY EXECUTION (with live-aligned confidence)
+      // ========================================
       if (!position && (decision.decision === 'BUY' || decision.decision === 'SELL')) {
-        if (decision.confidence >= 0.55) {
-          const quantity = (balance * 0.95) / currentPrice; // Use 95% of balance
+        // Use SAME confidence threshold as live (70%+)
+        if (decision.confidence >= LIVE_ALIGNED_PARAMS.MIN_TRADE_CONFIDENCE) {
+          const quantity = (balance * 0.95) / currentPrice;
           position = {
             side: decision.decision.toLowerCase() as 'buy' | 'sell',
             entryPrice: currentPrice,
             quantity,
             entryTime: currentTime,
+            entryIndex: i,
+            highestPrice: currentPrice,
+            lowestPrice: currentPrice,
             aiConfidence: decision.confidence,
             aiReasoning: decision.reasoning,
           };
         }
       } else if (position && decision.decision !== position.side.toUpperCase() && decision.decision !== 'HOLD') {
-        // Signal reversal - close position
-        if (decision.confidence >= 0.6) {
+        // Signal reversal - stricter confidence for reversals
+        if (decision.confidence >= 0.75) {
           const trade = this.closePosition(
             position, currentPrice, currentTime, config, 'signal', ++tradeId
           );
           trades.push(trade);
           balance += trade.pnl - trade.fees;
           position = null;
+          recentIndicators = [];
         }
       }
     }
 
-    // Close any remaining position at end
+    // Close remaining position
     if (position) {
       const lastCandle = candles[candles.length - 1];
       const trade = this.closePosition(
@@ -346,7 +491,6 @@ export class BacktestEngine extends EventEmitter {
       balance += trade.pnl - trade.fees;
     }
 
-    // Calculate metrics
     const metrics = this.calculateMetrics(trades, config.initialBalance, balance, maxDrawdown);
 
     return {
@@ -356,6 +500,149 @@ export class BacktestEngine extends EventEmitter {
       equityCurve,
       duration: 0,
     };
+  }
+
+  /**
+   * SMART EXIT - Approximates positionManager.checkSmartExit using indicators
+   * Since we don't have order book data, we detect reversals via:
+   * - RSI extreme levels
+   * - MACD histogram reversal
+   * - Momentum deterioration
+   */
+  private checkSmartExit(
+    side: 'buy' | 'sell',
+    indicators: Indicators,
+    recentIndicators: { rsi: number; macdHist: number }[],
+    currentPnlPercent: number
+  ): string | null {
+    // 1. RSI REVERSAL
+    if (side === 'buy' && indicators.rsi >= LIVE_ALIGNED_PARAMS.RSI_REVERSAL_OVERBOUGHT) {
+      return `RSI overbought (${indicators.rsi.toFixed(0)}) - reversal risk`;
+    }
+    if (side === 'sell' && indicators.rsi <= LIVE_ALIGNED_PARAMS.RSI_REVERSAL_OVERSOLD) {
+      return `RSI oversold (${indicators.rsi.toFixed(0)}) - reversal risk`;
+    }
+
+    // 2. MACD HISTOGRAM REVERSAL
+    if (recentIndicators.length >= 3) {
+      const recent = recentIndicators.slice(-3);
+      const histogramTrend = recent[2].macdHist - recent[0].macdHist;
+
+      // Histogram turning against position
+      if (side === 'buy' && histogramTrend < -LIVE_ALIGNED_PARAMS.MOMENTUM_REVERSAL_THRESHOLD) {
+        return `MACD momentum weakening - protecting profit`;
+      }
+      if (side === 'sell' && histogramTrend > LIVE_ALIGNED_PARAMS.MOMENTUM_REVERSAL_THRESHOLD) {
+        return `MACD momentum weakening - protecting profit`;
+      }
+    }
+
+    // 3. RSI MOMENTUM SHIFT
+    if (recentIndicators.length >= 3 && currentPnlPercent >= 1.0) {
+      const rsiChange = recentIndicators[recentIndicators.length - 1].rsi -
+        recentIndicators[0].rsi;
+
+      if (side === 'buy' && rsiChange < -15) {
+        return `RSI declining sharply - taking profit`;
+      }
+      if (side === 'sell' && rsiChange > 15) {
+        return `RSI rising sharply - taking profit`;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * ALIGNED DECISION - Approximates ORDER_BOOK strategy using indicators
+   * Uses stricter thresholds matching live trading filters
+   */
+  private getAlignedDecision(
+    _indicators: Indicators,
+    mtf: MultiTimeframeIndicators,
+    currentPrice: number
+  ): SimpleDecision {
+    let bullishScore = 0;
+    let bearishScore = 0;
+
+    // ========================================
+    // TREND ALIGNMENT (like order book trend check)
+    // ========================================
+
+    // EMA Trend (strong weight)
+    if (mtf.ema.scalping.trend === 'bullish') bullishScore += 2;
+    if (mtf.ema.scalping.trend === 'bearish') bearishScore += 2;
+    if (mtf.ema.standard.trend === 'bullish') bullishScore += 1;
+    if (mtf.ema.standard.trend === 'bearish') bearishScore += 1;
+
+    // RSI (like order book imbalance detection)
+    if (mtf.rsi.short < 30) bullishScore += 3;
+    else if (mtf.rsi.short < 40) bullishScore += 1;
+    if (mtf.rsi.short > 70) bearishScore += 3;
+    else if (mtf.rsi.short > 60) bearishScore += 1;
+
+    // MACD Momentum
+    if (mtf.macd.fast.histogram > 0 && mtf.macd.fast.histogram > mtf.macd.standard.histogram * 0.5) {
+      bullishScore += 2;
+    }
+    if (mtf.macd.fast.histogram < 0 && mtf.macd.fast.histogram < mtf.macd.standard.histogram * 0.5) {
+      bearishScore += 2;
+    }
+
+    // Bollinger Band Breakout (like order book breakout confirmation)
+    const bbWidth = (mtf.bollingerBands.standard.upper - mtf.bollingerBands.standard.lower) /
+      mtf.bollingerBands.standard.middle;
+    if (currentPrice <= mtf.bollingerBands.standard.lower && bbWidth > 0.02) {
+      bullishScore += 2;
+    }
+    if (currentPrice >= mtf.bollingerBands.standard.upper && bbWidth > 0.02) {
+      bearishScore += 2;
+    }
+
+    // Volume confirmation
+    if (mtf.volume.isHigh) {
+      if (bullishScore > bearishScore) bullishScore += 1;
+      if (bearishScore > bullishScore) bearishScore += 1;
+    }
+
+    // ========================================
+    // FILTER: Avoid consolidated/ranging markets
+    // (like order book CONSOLIDATION detection)
+    // ========================================
+    const netScore = Math.abs(bullishScore - bearishScore);
+    if (netScore < 3) {
+      return { decision: 'HOLD', confidence: 0.5, reasoning: 'No clear trend - HOLD' };
+    }
+
+    // Calculate confidence (scaled to match live trading requirements)
+    // Need 70%+ confidence for entry
+    const rawConfidence = 0.5 + netScore * 0.05;
+    const confidence = Math.min(0.95, rawConfidence);
+
+    if (bullishScore > bearishScore && bullishScore >= 5) {
+      return {
+        decision: 'BUY',
+        confidence,
+        reasoning: `Bullish: score ${bullishScore} vs ${bearishScore}`
+      };
+    } else if (bearishScore > bullishScore && bearishScore >= 5) {
+      return {
+        decision: 'SELL',
+        confidence,
+        reasoning: `Bearish: score ${bearishScore} vs ${bullishScore}`
+      };
+    }
+
+    return { decision: 'HOLD', confidence: 0.5, reasoning: 'Insufficient signal strength' };
+  }
+
+  private calculatePnLPercent(
+    position: { side: 'buy' | 'sell'; entryPrice: number },
+    currentPrice: number,
+    leverage: number
+  ): number {
+    const direction = position.side === 'buy' ? 1 : -1;
+    return ((currentPrice - position.entryPrice) / position.entryPrice) * 100 * direction * leverage;
   }
 
   private closePosition(
@@ -370,7 +657,7 @@ export class BacktestEngine extends EventEmitter {
     exitPrice: number,
     exitTime: Date,
     config: BacktestConfig,
-    exitReason: 'tp' | 'sl' | 'signal' | 'end',
+    exitReason: 'tp' | 'sl' | 'trailing' | 'smart_exit' | 'signal' | 'end',
     tradeId: number
   ): BacktestTrade {
     const pnl = this.calculatePnL(
@@ -462,53 +749,6 @@ export class BacktestEngine extends EventEmitter {
     }
   }
 
-  private getIndicatorDecision(
-    mtf: MultiTimeframeIndicators,
-    currentPrice: number
-  ): SimpleDecision {
-    let bullishSignals = 0;
-    let bearishSignals = 0;
-
-    // RSI signals
-    if (mtf.rsi.short < 30) bullishSignals += 2;
-    else if (mtf.rsi.short < 40) bullishSignals += 1;
-    if (mtf.rsi.short > 70) bearishSignals += 2;
-    else if (mtf.rsi.short > 60) bearishSignals += 1;
-
-    // EMA trend
-    if (mtf.ema.scalping.trend === 'bullish') bullishSignals++;
-    if (mtf.ema.scalping.trend === 'bearish') bearishSignals++;
-    if (mtf.ema.standard.trend === 'bullish') bullishSignals++;
-    if (mtf.ema.standard.trend === 'bearish') bearishSignals++;
-
-    // MACD
-    if (mtf.macd.fast.histogram > 0) bullishSignals++;
-    else bearishSignals++;
-    if (mtf.macd.standard.histogram > 0) bullishSignals++;
-    else bearishSignals++;
-
-    // Bollinger Bands
-    if (currentPrice <= mtf.bollingerBands.standard.lower) bullishSignals += 2;
-    if (currentPrice >= mtf.bollingerBands.standard.upper) bearishSignals += 2;
-
-    // Volume
-    if (mtf.volume.isHigh) {
-      bullishSignals++;
-      bearishSignals++;
-    }
-
-    const netSignal = bullishSignals - bearishSignals;
-    const confidence = Math.min(0.9, 0.5 + Math.abs(netSignal) * 0.05);
-
-    if (netSignal >= 3) {
-      return { decision: 'BUY', confidence, reasoning: `Bullish signals: ${bullishSignals}` };
-    } else if (netSignal <= -3) {
-      return { decision: 'SELL', confidence, reasoning: `Bearish signals: ${bearishSignals}` };
-    }
-
-    return { decision: 'HOLD', confidence: 0.5, reasoning: 'No clear signal' };
-  }
-
   private getMarketCondition(indicators: Indicators): string {
     const atrPercent = (indicators.atr / indicators.bollingerBands.middle) * 100;
     if (atrPercent > 1) return 'volatile';
@@ -536,13 +776,12 @@ export class BacktestEngine extends EventEmitter {
       ? trades.reduce((sum, t) => sum + (t.exitTime.getTime() - t.entryTime.getTime()), 0) / trades.length / 60000
       : 0;
 
-    // Sharpe Ratio (simplified)
     const returns = trades.map(t => t.pnlPercent);
     const avgReturn = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
     const stdDev = returns.length > 1
       ? Math.sqrt(returns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / (returns.length - 1))
       : 1;
-    const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252 * 24 * 60) : 0; // Annualized
+    const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252 * 24 * 60) : 0;
 
     return {
       totalTrades: trades.length,

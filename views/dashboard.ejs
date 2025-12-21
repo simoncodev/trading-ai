@@ -1,18 +1,19 @@
 <!DOCTYPE html>
 <html lang="it">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>TRADING BOT</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
-        
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             font-family: 'VT323', monospace;
             background: #000;
@@ -21,12 +22,12 @@
             font-size: 18px;
             line-height: 1.4;
         }
-        
+
         .container {
             max-width: 100%;
             padding: 8px;
         }
-        
+
         /* HEADER */
         .header {
             border: 4px solid #fff;
@@ -34,27 +35,29 @@
             margin-bottom: 8px;
             text-align: center;
         }
-        
+
         .header h1 {
             font-size: 24px;
             letter-spacing: 4px;
         }
-        
+
         .status-line {
             font-size: 14px;
             margin-top: 8px;
             color: #888;
         }
-        
+
         .status-line .live {
             color: #0f0;
             animation: blink 1s infinite;
         }
-        
+
         @keyframes blink {
-            50% { opacity: 0.5; }
+            50% {
+                opacity: 0.5;
+            }
         }
-        
+
         /* STATS BAR */
         .stats-bar {
             display: grid;
@@ -62,41 +65,49 @@
             gap: 8px;
             margin-bottom: 8px;
         }
-        
+
         @media (min-width: 600px) {
             .stats-bar {
                 grid-template-columns: repeat(4, 1fr);
             }
         }
-        
+
         .stat-box {
             border: 3px solid #fff;
             padding: 12px 8px;
             text-align: center;
         }
-        
+
         .stat-label {
             font-size: 12px;
             color: #888;
             text-transform: uppercase;
             letter-spacing: 2px;
         }
-        
+
         .stat-value {
             font-size: 22px;
             margin-top: 4px;
         }
-        
-        .stat-value.positive { color: #0f0; }
-        .stat-value.negative { color: #f00; }
-        .stat-value.warning { color: #ff0; }
-        
+
+        .stat-value.positive {
+            color: #0f0;
+        }
+
+        .stat-value.negative {
+            color: #f00;
+        }
+
+        .stat-value.warning {
+            color: #ff0;
+        }
+
         /* POSITIONS */
         .section {
             border: 4px solid #fff;
             margin-bottom: 8px;
         }
-        
+
         .section-header {
             border-bottom: 3px solid #fff;
             padding: 10px 12px;
@@ -105,11 +116,11 @@
             letter-spacing: 3px;
             background: #111;
         }
-        
+
         .section-body {
             padding: 0;
         }
-        
+
         .position {
             border-bottom: 2px solid #333;
             padding: 12px;
@@ -117,48 +128,123 @@
             grid-template-columns: 1fr 1fr;
             gap: 8px;
         }
-        
+
         .position:last-child {
             border-bottom: none;
         }
-        
+
         .position-symbol {
             font-size: 20px;
             color: #ff0;
             font-weight: bold;
         }
-        
+
         .position-side {
             font-size: 14px;
         }
-        
-        .position-side.buy { color: #0f0; }
-        .position-side.sell { color: #f00; }
-        
+
+        .position-side.buy {
+            color: #0f0;
+        }
+
+        .position-side.sell {
+            color: #f00;
+        }
+
         .position-pnl {
             text-align: right;
             font-size: 20px;
         }
-        
-        .position-pnl.positive { color: #0f0; }
-        .position-pnl.negative { color: #f00; }
-        
+
+        .position-pnl.positive {
+            color: #0f0;
+        }
+
+        .position-pnl.negative {
+            color: #f00;
+        }
+
         .position-info {
             font-size: 12px;
             color: #888;
         }
-        
+
         .position-info.right {
             text-align: right;
         }
-        
+
+        /* PENDING ORDERS */
+        .pending-order {
+            border-bottom: 2px solid #333;
+            padding: 12px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            background: linear-gradient(90deg, rgba(255,255,0,0.05) 0%, transparent 100%);
+            animation: pendingPulse 2s infinite;
+        }
+
+        @keyframes pendingPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .pending-order:last-child {
+            border-bottom: none;
+        }
+
+        .pending-symbol {
+            font-size: 20px;
+            color: #ff0;
+            font-weight: bold;
+        }
+
+        .pending-side {
+            font-size: 14px;
+        }
+
+        .pending-side.buy {
+            color: #0f0;
+        }
+
+        .pending-side.sell {
+            color: #f00;
+        }
+
+        .pending-price {
+            text-align: right;
+            font-size: 18px;
+            color: #fff;
+        }
+
+        .pending-distance {
+            font-size: 14px;
+        }
+
+        .pending-distance.near {
+            color: #0f0;
+        }
+
+        .pending-distance.far {
+            color: #ff0;
+        }
+
+        .pending-info {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .pending-info.right {
+            text-align: right;
+        }
+
         .empty-state {
             padding: 24px;
             text-align: center;
             color: #555;
             font-size: 16px;
         }
-        
+
         /* RECENT TRADES */
         .trade-row {
             border-bottom: 1px solid #333;
@@ -167,30 +253,35 @@
             justify-content: space-between;
             align-items: center;
         }
-        
+
         .trade-row:last-child {
             border-bottom: none;
         }
-        
+
         .trade-symbol {
             color: #ff0;
             font-size: 16px;
         }
-        
+
         .trade-result {
             font-size: 16px;
         }
-        
-        .trade-result.win { color: #0f0; }
-        .trade-result.loss { color: #f00; }
-        
+
+        .trade-result.win {
+            color: #0f0;
+        }
+
+        .trade-result.loss {
+            color: #f00;
+        }
+
         /* BUTTONS */
         .btn-row {
             display: flex;
             gap: 8px;
             margin-top: 8px;
         }
-        
+
         .btn {
             flex: 1;
             border: 3px solid #fff;
@@ -204,60 +295,68 @@
             cursor: pointer;
             transition: all 0.1s;
         }
-        
+
         .btn:hover {
             background: #fff;
             color: #000;
         }
-        
+
         .btn:active {
             transform: scale(0.98);
         }
-        
+
         .btn.danger {
             border-color: #f00;
             color: #f00;
         }
-        
+
         .btn.danger:hover {
             background: #f00;
             color: #000;
         }
-        
+
         /* LOG */
         .log-entry {
             padding: 8px 12px;
             border-bottom: 1px solid #222;
             font-size: 13px;
         }
-        
+
         .log-entry:last-child {
             border-bottom: none;
         }
-        
+
         .log-time {
             color: #555;
             margin-right: 8px;
         }
-        
-        .log-buy { color: #0f0; }
-        .log-sell { color: #f00; }
-        .log-hold { color: #888; }
-        
+
+        .log-buy {
+            color: #0f0;
+        }
+
+        .log-sell {
+            color: #f00;
+        }
+
+        .log-hold {
+            color: #888;
+        }
+
         /* SCROLLBAR */
         ::-webkit-scrollbar {
             width: 8px;
         }
-        
+
         ::-webkit-scrollbar-track {
             background: #000;
         }
-        
+
         ::-webkit-scrollbar-thumb {
             background: #333;
             border: 1px solid #fff;
         }
-        
+
         /* CONNECTION STATUS */
         .connection-status {
             position: fixed;
@@ -267,12 +366,12 @@
             font-size: 12px;
             border: 2px solid;
         }
-        
+
         .connection-status.connected {
             border-color: #0f0;
             color: #0f0;
         }
-        
+
         .connection-status.disconnected {
             border-color: #f00;
             color: #f00;
@@ -280,17 +379,18 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <!-- HEADER -->
         <div class="header">
             <h1>[ TRADING BOT ]</h1>
             <div class="status-line">
-                <span class="live">● LIVE</span> | 
+                <span class="live">● LIVE</span> |
                 <span id="timestamp">--:--:--</span>
             </div>
         </div>
-        
+
         <!-- STATS -->
         <div class="stats-bar">
             <div class="stat-box">
@@ -310,7 +410,15 @@
                 <div class="stat-value" id="winrate">0%</div>
             </div>
         </div>
-        
+
+        <!-- PENDING ORDERS -->
+        <div class="section">
+            <div class="section-header">◆ PENDING ORDERS (<span id="pendingCount">0</span>)</div>
+            <div class="section-body" id="pendingOrders">
+                <div class="empty-state">NO PENDING ORDERS</div>
+            </div>
+        </div>
+
         <!-- POSITIONS -->
         <div class="section">
             <div class="section-header">◆ OPEN POSITIONS (<span id="posCount">0</span>)</div>
@@ -318,7 +426,7 @@
                 <div class="empty-state">NO OPEN POSITIONS</div>
             </div>
         </div>
-        
+
         <!-- RECENT TRADES -->
         <div class="section">
             <div class="section-header">◆ LAST TRADES</div>
@@ -326,7 +434,7 @@
                 <div class="empty-state">NO TRADES YET</div>
             </div>
         </div>
-        
+
         <!-- LOG -->
         <div class="section">
             <div class="section-header">◆ ACTIVITY LOG</div>
@@ -334,21 +442,23 @@
                 <div class="empty-state">WAITING FOR SIGNALS...</div>
             </div>
         </div>
-        
+
         <!-- BUTTONS -->
         <div class="btn-row">
             <button class="btn" onclick="location.href='/trades'">TRADES</button>
             <button class="btn" onclick="location.href='/performance'">STATS</button>
+            <button class="btn" style="border-color: #0f0; color: #0f0;"
+                onclick="location.href='/backtest'">BACKTEST</button>
             <button class="btn danger" onclick="closeAll()">CLOSE ALL</button>
         </div>
         <div class="btn-row" style="margin-top: 4px;">
             <button class="btn" style="border-color: #ff0; color: #ff0;" onclick="resetBalance()">RESET $</button>
         </div>
     </div>
-    
+
     <!-- CONNECTION STATUS -->
     <div class="connection-status disconnected" id="connStatus">OFFLINE</div>
-    
+
     <script src="/socket.io/socket.io.js"></script>
     <script>
         // WebSocket connection with auto-reconnect
@@ -358,58 +468,58 @@
             reconnectionDelay: 1000,
             timeout: 5000
         });
-        
+
         const connStatus = document.getElementById('connStatus');
         const logContainer = document.getElementById('log');
         let logEntries = [];
         const MAX_LOG_ENTRIES = 20;
-        
+
         // Connection handlers
         socket.on('connect', () => {
             connStatus.textContent = 'ONLINE';
             connStatus.className = 'connection-status connected';
             addLog('SYSTEM', 'Connected to server');
         });
-        
+
         socket.on('disconnect', () => {
             connStatus.textContent = 'OFFLINE';
             connStatus.className = 'connection-status disconnected';
         });
-        
+
         // Stats update
         socket.on('stats:update', (stats) => {
-            document.getElementById('winrate').textContent = 
+            document.getElementById('winrate').textContent =
                 stats.win_rate ? stats.win_rate.toFixed(0) + '%' : '0%';
-            
+
             const winrateEl = document.getElementById('winrate');
-            winrateEl.className = 'stat-value ' + 
+            winrateEl.className = 'stat-value ' +
                 (parseFloat(stats.win_rate) >= 50 ? 'positive' : 'negative');
         });
-        
+
         // Positions update
         socket.on('positions:update', (data) => {
             // Update timestamp
-            document.getElementById('timestamp').textContent = 
+            document.getElementById('timestamp').textContent =
                 new Date().toLocaleTimeString('it-IT');
-            
+
             // Update stats
-            document.getElementById('balance').textContent = 
+            document.getElementById('balance').textContent =
                 '$' + data.balance.toFixed(2);
-            
-            document.getElementById('equity').textContent = 
+
+            document.getElementById('equity').textContent =
                 '$' + data.equity.toFixed(2);
-            
+
             const pnlEl = document.getElementById('pnl');
-            pnlEl.textContent = (data.unrealizedPnl >= 0 ? '+' : '') + 
+            pnlEl.textContent = (data.unrealizedPnl >= 0 ? '+' : '') +
                 '$' + data.unrealizedPnl.toFixed(2);
-            pnlEl.className = 'stat-value ' + 
+            pnlEl.className = 'stat-value ' +
                 (data.unrealizedPnl >= 0 ? 'positive' : 'negative');
-            
+
             // Update positions
             document.getElementById('posCount').textContent = data.trades.length;
-            
+
             const posContainer = document.getElementById('positions');
-            
+
             if (data.trades.length === 0) {
                 posContainer.innerHTML = '<div class="empty-state">NO OPEN POSITIONS</div>';
             } else {
@@ -419,7 +529,7 @@
                     const sideClass = t.side === 'buy' ? 'buy' : 'sell';
                     const symbol = t.symbol.replace('-USDC', '');
                     const pnlPct = t.pnl_percentage || 0;
-                    
+
                     return `
                         <div class="position">
                             <div>
@@ -437,11 +547,11 @@
                 }).join('');
             }
         });
-        
+
         // Decisions update (for log)
         socket.on('decisions:update', (decisions) => {
             if (!decisions || decisions.length === 0) return;
-            
+
             const latest = decisions[0];
             if (latest && latest.decision !== 'HOLD') {
                 addLog(
@@ -451,37 +561,93 @@
                 );
             }
         });
-        
+
         // Trade closed event
         socket.on('trade:closed', (data) => {
             const pnl = data.pnl || 0;
-            const symbol = data.symbol.replace('-USDC', '');
+            const symbol = (data.symbol || '').replace('-USDC', '');
             addLog(symbol, `CLOSED ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`, pnl >= 0 ? 'buy' : 'sell');
-            
+
             // Update trades list
-            updateTradesList(data);
+            loadTrades();
         });
-        
+
+        // Position closed event (from PositionManager)
+        socket.on('position:closed', (data) => {
+            const pnl = data.pnl || 0;
+            const symbol = (data.symbol || '').replace('-USDC', '');
+            const reason = data.reason || 'closed';
+            addLog(symbol, `${reason} ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`, pnl >= 0 ? 'buy' : 'sell');
+
+            // Update trades list immediately
+            loadTrades();
+        });
+
+        // Pending orders update
+        socket.on('pendingOrders:update', (orders) => {
+            document.getElementById('pendingCount').textContent = orders.length;
+            const container = document.getElementById('pendingOrders');
+
+            if (!orders || orders.length === 0) {
+                container.innerHTML = '<div class="empty-state">NO PENDING ORDERS</div>';
+                return;
+            }
+
+            container.innerHTML = orders.map(o => {
+                const sideClass = o.side === 'buy' ? 'buy' : 'sell';
+                const symbol = o.symbol.replace('-USDC', '');
+                const currentPrice = o.currentPrice || o.limitPrice;
+                
+                // Calcola distanza dal prezzo target
+                const distance = o.side === 'buy' 
+                    ? ((currentPrice - o.limitPrice) / o.limitPrice * 100)  // BUY: positivo se prezzo sopra
+                    : ((o.limitPrice - currentPrice) / o.limitPrice * 100); // SELL: positivo se prezzo sotto
+                
+                const distanceClass = Math.abs(distance) < 0.1 ? 'near' : 'far';
+                const confidence = (o.confidence * 100).toFixed(0);
+
+                return `
+                    <div class="pending-order">
+                        <div>
+                            <div class="pending-symbol">⏳ ${symbol}</div>
+                            <div class="pending-side ${sideClass}">${o.side.toUpperCase()} LIMIT</div>
+                        </div>
+                        <div>
+                            <div class="pending-price">NOW: $${currentPrice.toFixed(2)}</div>
+                            <div class="pending-distance ${distanceClass}">${distance >= 0 ? '+' : ''}${distance.toFixed(3)}%</div>
+                        </div>
+                        <div class="pending-info">TARGET: $${o.limitPrice.toFixed(2)}</div>
+                        <div class="pending-info right">CONF: ${confidence}%</div>
+                    </div>
+                `;
+            }).join('');
+        });
+
+        // Pending order cancelled
+        socket.on('pendingOrder:cancelled', (data) => {
+            addLog('SYSTEM', `Order cancelled: ${data.orderId}`, 'sell');
+        });
+
         // Add log entry
         function addLog(symbol, message, type = '') {
             const time = new Date().toLocaleTimeString('it-IT');
             logEntries.unshift({ time, symbol, message, type });
-            
+
             if (logEntries.length > MAX_LOG_ENTRIES) {
                 logEntries = logEntries.slice(0, MAX_LOG_ENTRIES);
             }
-            
+
             renderLog();
         }
-        
+
         function renderLog() {
             const container = document.getElementById('log');
-            
+
             if (logEntries.length === 0) {
                 container.innerHTML = '<div class="empty-state">WAITING FOR SIGNALS...</div>';
                 return;
             }
-            
+
             container.innerHTML = logEntries.map(e => `
                 <div class="log-entry">
                     <span class="log-time">${e.time}</span>
@@ -489,7 +655,7 @@
                 </div>
             `).join('');
         }
-        
+
         // Fetch recent trades on load
         async function loadTrades() {
             try {
@@ -500,20 +666,20 @@
                 console.error('Failed to load trades');
             }
         }
-        
+
         function renderTrades(trades) {
             const container = document.getElementById('trades');
-            
+
             if (!trades || trades.length === 0) {
                 container.innerHTML = '<div class="empty-state">NO TRADES YET</div>';
                 return;
             }
-            
+
             container.innerHTML = trades.slice(0, 5).map(t => {
                 const pnl = parseFloat(t.pnl) || 0;
                 const resultClass = pnl >= 0 ? 'win' : 'loss';
                 const symbol = t.symbol.replace('-USDC', '');
-                
+
                 return `
                     <div class="trade-row">
                         <span class="trade-symbol">${symbol}</span>
@@ -522,15 +688,15 @@
                 `;
             }).join('');
         }
-        
+
         function updateTradesList(newTrade) {
             loadTrades(); // Reload trades
         }
-        
+
         // Close all positions
         async function closeAll() {
             if (!confirm('CLOSE ALL POSITIONS?')) return;
-            
+
             try {
                 const res = await fetch('/api/trades/close-all', { method: 'POST' });
                 const data = await res.json();
@@ -539,11 +705,11 @@
                 addLog('SYSTEM', 'Failed to close positions', 'sell');
             }
         }
-        
+
         // Reset ALL - balance, trades, decisions
         async function resetBalance() {
             if (!confirm('RESET TUTTO? (Balance, Trades, Decisions)')) return;
-            
+
             try {
                 const res = await fetch('/api/reset', { method: 'POST' });
                 const data = await res.json();
@@ -558,10 +724,11 @@
                 addLog('SYSTEM', 'Failed to reset', 'sell');
             }
         }
-        
+
         // Initial load
         loadTrades();
         addLog('SYSTEM', 'Dashboard initialized');
     </script>
 </body>
+
 </html>

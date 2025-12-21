@@ -16,8 +16,10 @@ import {
   applyMasterFilter, 
   checkSignalAlignment, 
   recordLoss, 
-  recordWin 
+  recordWin,
+  recordTradeExecuted 
 } from '../filters/tradingFilters';
+import { WebServer } from '../web/server';
 
 // Strategy mode selection
 // - 'ORDER_BOOK_ONLY': Pure algorithmic (no AI)
@@ -525,6 +527,37 @@ Remember: We need trades to make profits. Only reject clear counter-signals.
           const allActivePositions = await dbService.getActiveTrades();
           const existingDbPosition = allActivePositions.find(t => t.symbol === symbol);
           
+          // ========================================
+          // CRYPTO CORRELATION FILTER
+          // Tutte le crypto si muovono insieme, trainate da BTC
+          // Non aprire posizioni in direzione opposta a quelle esistenti
+          // ========================================
+          const signalSide = decision === 'BUY' ? 'buy' : 'sell';
+          
+          // Controlla se ci sono posizioni aperte in direzione opposta
+          const oppositePositions = allActivePositions.filter(p => p.side !== signalSide);
+          const sameDirectionPositions = allActivePositions.filter(p => p.side === signalSide);
+          
+          if (oppositePositions.length > 0 && !existingDbPosition) {
+            // Abbiamo posizioni in direzione opposta - BLOCCA
+            const oppositeSymbols = oppositePositions.map(p => p.symbol).join(', ');
+            logger.warn(`🔗 [${symbol}] CRYPTO CORRELATION BLOCK: Segnale ${signalSide.toUpperCase()} bloccato`, {
+              reason: 'Posizioni aperte in direzione opposta',
+              oppositePositions: oppositeSymbols,
+              oppositeSide: oppositePositions[0].side,
+              currentSignal: signalSide,
+            });
+            tradeDecision.executed = false;
+            tradeDecision.error = `Crypto correlation: ${oppositePositions[0].side.toUpperCase()} positions open on ${oppositeSymbols}`;
+            await this.saveTradeDecision(tradeDecision);
+            return null;
+          }
+          
+          // Log direzione coerente
+          if (sameDirectionPositions.length > 0) {
+            logger.info(`🔗 [${symbol}] CRYPTO CORRELATION OK: Direzione coerente con ${sameDirectionPositions.length} altre posizioni ${signalSide.toUpperCase()}`);
+          }
+          
           // Gestione posizioni esistenti dal DATABASE
           if (existingDbPosition) {
             const positionSide = existingDbPosition.side; // 'buy' o 'sell'
@@ -619,6 +652,9 @@ Remember: We need trades to make profits. Only reject clear counter-signals.
 
           if (result.success) {
             this.dailyTradeCount++;
+            // ELITE: Record trade for cooldown system
+            recordTradeExecuted();
+            
             if (result.order) {
               // Update daily P&L estimation (simplified)
               this.dailyPnL += result.order.fee * -1;
@@ -711,20 +747,64 @@ Remember: We need trades to make profits. Only reject clear counter-signals.
       quantity: quantity.toFixed(6),
     });
 
+    // Genera ID temporaneo per l'ordine pending
+    const pendingOrderId = `PENDING_${Date.now()}_${symbol}`;
+
     try {
-      logger.info(`💰 Executing ${side.toUpperCase()} order`, {
+      // Get best bid/ask for LIMIT order
+      // BUY at BID price (to be a maker), SELL at ASK price
+      let limitPrice = currentPrice;
+      try {
+        const { bid, ask, spread } = await hyperliquidService.getBestBidAsk(symbol);
+        // For BUY: place at bid (or slightly above to get filled faster)
+        // For SELL: place at ask (or slightly below to get filled faster)
+        const aggressiveness = 0.0001; // 0.01% more aggressive to ensure fill
+        limitPrice = side === 'buy' 
+          ? bid * (1 + aggressiveness)  // Slightly above bid
+          : ask * (1 - aggressiveness); // Slightly below ask
+        
+        logger.warn(`📊 LIMIT order pricing`, {
+          side,
+          bestBid: bid.toFixed(2),
+          bestAsk: ask.toFixed(2),
+          spread: spread.toFixed(4) + '%',
+          limitPrice: limitPrice.toFixed(2),
+        });
+      } catch {
+        logger.warn('Could not get bid/ask, using mid price');
+      }
+
+      // Aggiungi ordine alla lista pending (mostrato in dashboard)
+      WebServer.addPendingOrder({
+        id: pendingOrderId,
+        symbol,
+        side,
+        limitPrice,
+        quantity,
+        confidence: aiResponse.confidence,
+        reasoning: aiResponse.reasoning,
+        createdAt: Date.now(),
+        status: 'pending',
+        currentPrice,
+      });
+
+      logger.info(`💰 Executing ${side.toUpperCase()} LIMIT order`, {
         symbol,
         side,
         quantity,
-        price: currentPrice,
+        limitPrice: limitPrice.toFixed(2),
       });
 
       const order = await hyperliquidService.placeOrder(
         symbol,
         side,
         quantity,
-        currentPrice // Use currentPrice for DRY_RUN tracking
+        limitPrice, // Use LIMIT price at bid/ask
+        true // useLimit = true
       );
+
+      // Rimuovi da pending dopo fill
+      WebServer.removePendingOrder(pendingOrderId);
 
       logger.info(`✅ Order executed successfully`, {
         orderId: order.orderId,
@@ -754,6 +834,9 @@ Remember: We need trades to make profits. Only reject clear counter-signals.
         decision,
       };
     } catch (error) {
+      // Rimuovi ordine pending in caso di errore
+      WebServer.removePendingOrder(pendingOrderId);
+      
       logger.error('Failed to execute trade', error);
       return {
         success: false,

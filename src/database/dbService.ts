@@ -26,7 +26,7 @@ class DatabaseService {
   }
 
   /**
-   * Initialize database connection
+   * Initialize database connection and create tables if they don't exist
    */
   async connect(): Promise<void> {
     try {
@@ -34,9 +34,237 @@ class DatabaseService {
       await client.query('SELECT NOW()');
       client.release();
       logger.info('Database connected successfully');
+      
+      // Auto-initialize tables if they don't exist
+      await this.initializeSchema();
     } catch (error) {
       logger.error('Failed to connect to database', error);
       throw error;
+    }
+  }
+
+  /**
+   * Initialize database schema - creates tables if they don't exist
+   */
+  private async initializeSchema(): Promise<void> {
+    try {
+      // Check if tables exist
+      const tableCheck = await this.pool.query(`
+        SELECT COUNT(*) as count FROM information_schema.tables 
+        WHERE table_schema = 'public' AND table_name = 'trades'
+      `);
+      
+      const tablesExist = parseInt(tableCheck.rows[0].count) > 0;
+      
+      if (!tablesExist) {
+        logger.info('📦 Database tables not found. Initializing schema...');
+        await this.createSchema();
+        logger.info('✅ Database schema initialized successfully');
+      } else {
+        logger.info('✅ Database tables already exist');
+      }
+    } catch (error) {
+      logger.error('Failed to initialize database schema', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create all database tables, indexes, views and triggers
+   */
+  private async createSchema(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Trades table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS trades (
+          id SERIAL PRIMARY KEY,
+          trade_id VARCHAR(100) UNIQUE NOT NULL,
+          symbol VARCHAR(20) NOT NULL,
+          side VARCHAR(10) NOT NULL,
+          order_type VARCHAR(20) NOT NULL,
+          quantity DECIMAL(18, 8) NOT NULL,
+          entry_price DECIMAL(18, 8) NOT NULL,
+          exit_price DECIMAL(18, 8),
+          stop_loss DECIMAL(18, 8),
+          take_profit DECIMAL(18, 8),
+          status VARCHAR(20) NOT NULL,
+          pnl DECIMAL(18, 8),
+          pnl_percentage DECIMAL(10, 4),
+          fee DECIMAL(18, 8),
+          leverage INTEGER,
+          executed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          closed_at TIMESTAMP,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      // AI Decisions table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ai_decisions (
+          id SERIAL PRIMARY KEY,
+          symbol VARCHAR(20) NOT NULL,
+          decision VARCHAR(10) NOT NULL,
+          confidence DECIMAL(5, 4) NOT NULL,
+          reasoning TEXT NOT NULL,
+          current_price DECIMAL(18, 8) NOT NULL,
+          suggested_price DECIMAL(18, 8),
+          suggested_quantity DECIMAL(18, 8),
+          stop_loss DECIMAL(18, 8),
+          take_profit DECIMAL(18, 8),
+          executed BOOLEAN DEFAULT FALSE,
+          trade_id VARCHAR(100),
+          rsi DECIMAL(10, 4),
+          macd DECIMAL(18, 8),
+          macd_signal DECIMAL(18, 8),
+          macd_histogram DECIMAL(18, 8),
+          ema_12 DECIMAL(18, 8),
+          ema_26 DECIMAL(18, 8),
+          bb_upper DECIMAL(18, 8),
+          bb_middle DECIMAL(18, 8),
+          bb_lower DECIMAL(18, 8),
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      // Market snapshots table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS market_snapshots (
+          id SERIAL PRIMARY KEY,
+          symbol VARCHAR(20) NOT NULL,
+          price DECIMAL(18, 8) NOT NULL,
+          volume_24h DECIMAL(20, 8),
+          price_change_24h DECIMAL(10, 4),
+          volatility DECIMAL(10, 4),
+          timestamp TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      // Account history table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS account_history (
+          id SERIAL PRIMARY KEY,
+          balance DECIMAL(18, 8) NOT NULL,
+          available_balance DECIMAL(18, 8) NOT NULL,
+          total_pnl DECIMAL(18, 8) NOT NULL,
+          daily_pnl DECIMAL(18, 8) NOT NULL,
+          open_positions INTEGER NOT NULL DEFAULT 0,
+          timestamp TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      // Performance metrics table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS performance_metrics (
+          id SERIAL PRIMARY KEY,
+          metric_date DATE NOT NULL UNIQUE,
+          total_trades INTEGER NOT NULL DEFAULT 0,
+          winning_trades INTEGER NOT NULL DEFAULT 0,
+          losing_trades INTEGER NOT NULL DEFAULT 0,
+          win_rate DECIMAL(5, 4),
+          total_pnl DECIMAL(18, 8),
+          daily_pnl DECIMAL(18, 8),
+          max_drawdown DECIMAL(10, 4),
+          sharpe_ratio DECIMAL(10, 4),
+          avg_trade_duration_minutes INTEGER,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      // System logs table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS system_logs (
+          id SERIAL PRIMARY KEY,
+          level VARCHAR(20) NOT NULL,
+          message TEXT NOT NULL,
+          metadata JSONB,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      // Create indexes
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_trades_executed_at ON trades(executed_at DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_ai_decisions_symbol ON ai_decisions(symbol)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_ai_decisions_decision ON ai_decisions(decision)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_ai_decisions_created_at ON ai_decisions(created_at DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol ON market_snapshots(symbol)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_market_snapshots_timestamp ON market_snapshots(timestamp DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_account_history_timestamp ON account_history(timestamp DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_performance_metrics_date ON performance_metrics(metric_date DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_system_logs_level ON system_logs(level)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at DESC)`);
+
+      // Create views
+      await client.query(`
+        CREATE OR REPLACE VIEW v_active_trades AS
+        SELECT * FROM trades WHERE status = 'open' ORDER BY executed_at DESC
+      `);
+
+      await client.query(`
+        CREATE OR REPLACE VIEW v_recent_decisions AS
+        SELECT * FROM ai_decisions ORDER BY created_at DESC LIMIT 100
+      `);
+
+      await client.query(`
+        CREATE OR REPLACE VIEW v_daily_performance AS
+        SELECT 
+          DATE(executed_at) as trade_date,
+          COUNT(*) as total_trades,
+          SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+          SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_trades,
+          SUM(pnl) as daily_pnl,
+          AVG(pnl) as avg_pnl,
+          MAX(pnl) as best_trade,
+          MIN(pnl) as worst_trade
+        FROM trades
+        WHERE status = 'closed'
+        GROUP BY DATE(executed_at)
+        ORDER BY trade_date DESC
+      `);
+
+      // Create function for updated_at trigger
+      await client.query(`
+        CREATE OR REPLACE FUNCTION update_updated_at_column()
+        RETURNS TRIGGER AS $$
+        BEGIN
+          NEW.updated_at = NOW();
+          RETURN NEW;
+        END;
+        $$ language 'plpgsql'
+      `);
+
+      // Create triggers (drop first to avoid errors)
+      await client.query(`DROP TRIGGER IF EXISTS update_trades_updated_at ON trades`);
+      await client.query(`
+        CREATE TRIGGER update_trades_updated_at BEFORE UPDATE ON trades
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
+      `);
+
+      await client.query(`DROP TRIGGER IF EXISTS update_performance_metrics_updated_at ON performance_metrics`);
+      await client.query(`
+        CREATE TRIGGER update_performance_metrics_updated_at BEFORE UPDATE ON performance_metrics
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
+      `);
+
+      // Insert initial performance metric for today
+      await client.query(`
+        INSERT INTO performance_metrics (metric_date, total_trades, winning_trades, losing_trades, win_rate, total_pnl, daily_pnl)
+        VALUES (CURRENT_DATE, 0, 0, 0, 0, 0, 0)
+        ON CONFLICT (metric_date) DO NOTHING
+      `);
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
   }
 

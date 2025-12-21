@@ -34,8 +34,8 @@ export const config: Config = {
       process.env.AI_PROVIDER === 'anthropic'
         ? getEnvVar('ANTHROPIC_API_KEY')
         : process.env.AI_PROVIDER === 'deepseek'
-        ? getEnvVar('DEEPSEEK_API_KEY')
-        : getEnvVar('OPENAI_API_KEY'),
+          ? getEnvVar('DEEPSEEK_API_KEY')
+          : getEnvVar('OPENAI_API_KEY'),
     maxTokens: parseInt(process.env.AI_MAX_TOKENS || '1000', 10),
     temperature: parseFloat(process.env.AI_TEMPERATURE || '0.7'),
   },
@@ -50,7 +50,7 @@ export const config: Config = {
     positionSizePercentage: parseFloat(getEnvVar('POSITION_SIZE_PERCENTAGE', '10')),
     maxPositions: parseInt(getEnvVar('MAX_POSITIONS', '5'), 10),
     minLeverage: parseFloat(getEnvVar('MIN_LEVERAGE', '2')),
-    maxLeverage: parseFloat(getEnvVar('MAX_LEVERAGE', '10')),
+    maxLeverage: parseFloat(getEnvVar('MAX_LEVERAGE', '5')), // REDUCED: 5x is safer
   },
   risk: {
     stopLossPercentage: parseFloat(getEnvVar('STOP_LOSS_PERCENTAGE', '2')),

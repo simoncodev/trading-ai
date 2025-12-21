@@ -254,10 +254,50 @@ export interface CooldownResult {
   adjustedConfidenceThreshold: number;
 }
 
+// =====================================================
+// ELITE SCALPER: COOLDOWN E TRADE LIMITING
+// =====================================================
+
 // Track last loss time globally
 let lastLossTime: number = 0;
 let recentLossCount: number = 0;
 let lastLossCheckTime: number = 0;
+
+// NUOVO: Track ultimo trade (qualsiasi risultato)
+let lastTradeTime: number = 0;
+let dailyTradeCount: number = 0;
+let lastDailyReset: string = '';
+
+// ELITE SETTINGS: Meno trade = trade migliori
+const ELITE_CONFIG = {
+  MIN_TIME_BETWEEN_TRADES_MS: 3 * 60 * 1000,  // 3 minuti tra un trade e l'altro
+  MAX_DAILY_TRADES: 15,                         // Max 15 trade al giorno
+  COOLDOWN_AFTER_LOSS_MS: 5 * 60 * 1000,       // 5 min dopo una loss
+  COOLDOWN_AFTER_2_LOSSES_MS: 10 * 60 * 1000,  // 10 min dopo 2 losses
+  COOLDOWN_AFTER_3_LOSSES_MS: 30 * 60 * 1000,  // 30 min dopo 3+ losses
+};
+
+/**
+ * Registra un trade eseguito
+ */
+export function recordTradeExecuted(): void {
+  lastTradeTime = Date.now();
+  
+  // Reset daily counter if new day
+  const today = new Date().toDateString();
+  if (today !== lastDailyReset) {
+    dailyTradeCount = 0;
+    lastDailyReset = today;
+  }
+  
+  dailyTradeCount++;
+  
+  logger.info('📊 Trade recorded', {
+    dailyTradeCount,
+    maxDaily: ELITE_CONFIG.MAX_DAILY_TRADES,
+    lastTradeTime: new Date(lastTradeTime).toISOString(),
+  });
+}
 
 /**
  * Updates loss tracking when a trade closes in loss
@@ -288,41 +328,81 @@ export function recordWin(): void {
 
 /**
  * Checks if we should wait before trading after losses
+ * ELITE VERSION: Include time-based cooldown tra trade
  * @param consecutiveLosses Number of consecutive losses from DB
  */
 export function checkCooldown(consecutiveLosses: number): CooldownResult {
-  const baseThreshold = 0.55; // Normal confidence threshold
+  const baseThreshold = 0.65; // RAISED: Confidence minima più alta
   let adjustedThreshold = baseThreshold;
   let waitMinutes = 0;
   let shouldWait = false;
   let reason = 'No cooldown needed';
 
-  // Calculate time since last loss
-  const minutesSinceLastLoss = lastLossTime > 0 
-    ? (Date.now() - lastLossTime) / (60 * 1000) 
-    : Infinity;
-
-  // Cooldown rules based on consecutive losses
-  if (consecutiveLosses >= 5) {
-    // After 5 losses: 15 min cooldown, +0.15 confidence required
-    waitMinutes = 15;
-    adjustedThreshold = baseThreshold + 0.15;
-    reason = `5+ consecutive losses: ${waitMinutes}min cooldown, ${(adjustedThreshold * 100).toFixed(0)}% confidence required`;
-  } else if (consecutiveLosses >= 3) {
-    // After 3 losses: 5 min cooldown, +0.10 confidence required
-    waitMinutes = 5;
-    adjustedThreshold = baseThreshold + 0.10;
-    reason = `3+ consecutive losses: ${waitMinutes}min cooldown, ${(adjustedThreshold * 100).toFixed(0)}% confidence required`;
-  } else if (consecutiveLosses >= 2) {
-    // After 2 losses: +0.05 confidence required
-    adjustedThreshold = baseThreshold + 0.05;
-    reason = `2+ consecutive losses: ${(adjustedThreshold * 100).toFixed(0)}% confidence required`;
+  // Reset daily counter if new day
+  const today = new Date().toDateString();
+  if (today !== lastDailyReset) {
+    dailyTradeCount = 0;
+    lastDailyReset = today;
   }
 
-  // Check if still in cooldown period
-  if (waitMinutes > 0 && minutesSinceLastLoss < waitMinutes) {
+  // ========================================
+  // CHECK 1: Daily trade limit
+  // ========================================
+  if (dailyTradeCount >= ELITE_CONFIG.MAX_DAILY_TRADES) {
     shouldWait = true;
-    reason = `Cooldown active: ${(waitMinutes - minutesSinceLastLoss).toFixed(1)} minutes remaining`;
+    reason = `⛔ Daily limit reached: ${dailyTradeCount}/${ELITE_CONFIG.MAX_DAILY_TRADES} trades`;
+    return { shouldWait, waitMinutes: 999, reason, adjustedConfidenceThreshold: 1.0 };
+  }
+
+  // ========================================
+  // CHECK 2: Minimum time between trades
+  // ========================================
+  const msSinceLastTrade = lastTradeTime > 0 ? Date.now() - lastTradeTime : Infinity;
+  if (msSinceLastTrade < ELITE_CONFIG.MIN_TIME_BETWEEN_TRADES_MS) {
+    const remainingMs = ELITE_CONFIG.MIN_TIME_BETWEEN_TRADES_MS - msSinceLastTrade;
+    waitMinutes = remainingMs / (60 * 1000);
+    shouldWait = true;
+    reason = `⏳ Cooldown tra trade: ${waitMinutes.toFixed(1)} min rimanenti`;
+    return { shouldWait, waitMinutes, reason, adjustedConfidenceThreshold: baseThreshold };
+  }
+
+  // Calculate time since last loss
+  const msSinceLastLoss = lastLossTime > 0 ? Date.now() - lastLossTime : Infinity;
+
+  // ========================================
+  // CHECK 3: Consecutive losses cooldown (AGGRESSIVE)
+  // ========================================
+  if (consecutiveLosses >= 3 || recentLossCount >= 3) {
+    const cooldownMs = ELITE_CONFIG.COOLDOWN_AFTER_3_LOSSES_MS;
+    if (msSinceLastLoss < cooldownMs) {
+      waitMinutes = (cooldownMs - msSinceLastLoss) / (60 * 1000);
+      shouldWait = true;
+      adjustedThreshold = 0.90; // Richiedi 90% confidence dopo 3 losses
+      reason = `🛑 3+ losses: ${waitMinutes.toFixed(1)}min cooldown, richiesto ${(adjustedThreshold * 100).toFixed(0)}% confidence`;
+      return { shouldWait, waitMinutes, reason, adjustedConfidenceThreshold: adjustedThreshold };
+    }
+    adjustedThreshold = 0.85;
+    reason = `⚠️ Post 3+ losses: ${(adjustedThreshold * 100).toFixed(0)}% confidence richiesta`;
+  } else if (consecutiveLosses >= 2 || recentLossCount >= 2) {
+    const cooldownMs = ELITE_CONFIG.COOLDOWN_AFTER_2_LOSSES_MS;
+    if (msSinceLastLoss < cooldownMs) {
+      waitMinutes = (cooldownMs - msSinceLastLoss) / (60 * 1000);
+      shouldWait = true;
+      adjustedThreshold = 0.80;
+      reason = `⚠️ 2 losses: ${waitMinutes.toFixed(1)}min cooldown, richiesto ${(adjustedThreshold * 100).toFixed(0)}% confidence`;
+      return { shouldWait, waitMinutes, reason, adjustedConfidenceThreshold: adjustedThreshold };
+    }
+    adjustedThreshold = 0.75;
+    reason = `Post 2 losses: ${(adjustedThreshold * 100).toFixed(0)}% confidence richiesta`;
+  } else if (consecutiveLosses >= 1 || recentLossCount >= 1) {
+    const cooldownMs = ELITE_CONFIG.COOLDOWN_AFTER_LOSS_MS;
+    if (msSinceLastLoss < cooldownMs) {
+      waitMinutes = (cooldownMs - msSinceLastLoss) / (60 * 1000);
+      shouldWait = true;
+      reason = `⏳ Post-loss cooldown: ${waitMinutes.toFixed(1)}min rimanenti`;
+      return { shouldWait, waitMinutes, reason, adjustedConfidenceThreshold: baseThreshold + 0.05 };
+    }
+    adjustedThreshold = baseThreshold + 0.05;
   }
 
   return {

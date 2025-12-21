@@ -142,47 +142,80 @@ class HyperliquidService {
   }
 
   /**
+   * Gets best bid and ask prices from order book
+   */
+  async getBestBidAsk(symbol: string): Promise<{ bid: number; ask: number; spread: number }> {
+    const coin = this.toOrderBookSymbol(symbol);
+    const l2Book = await this.sdk.info.getL2Book(coin);
+
+    const bids = l2Book?.levels?.[0] || [];
+    const asks = l2Book?.levels?.[1] || [];
+
+    if (bids.length === 0 || asks.length === 0) {
+      throw new Error('Invalid order book data');
+    }
+
+    const bid = parseFloat(bids[0].px);
+    const ask = parseFloat(asks[0].px);
+    const spread = ((ask - bid) / bid) * 100;
+
+    return { bid, ask, spread };
+  }
+
+  /**
    * Places an order on Hyperliquid
+   * @param useLimit - If true, uses LIMIT order at bid/ask for better fills
    */
   async placeOrder(
     symbol: string,
     side: 'buy' | 'sell',
     quantity: number,
-    price?: number
+    price?: number,
+    useLimit: boolean = true
   ): Promise<OrderResponse> {
-    logger.info(`Placing ${side} order for ${quantity} ${symbol}`, {
+    logger.info(`Placing ${side} ${useLimit ? 'LIMIT' : 'MARKET'} order for ${quantity} ${symbol}`, {
       symbol,
       side,
       quantity,
       price,
+      useLimit,
     });
 
-    // Dry run mode - REALISTIC SIMULATION
+    // Dry run mode - REALISTIC SIMULATION FOR LIMIT ORDERS
     if (config.system.dryRun) {
-      // Simulate network latency (50-150ms)
-      const latency = 50 + Math.random() * 100;
+      // Simulate network latency (30-80ms - Hyperliquid is fast)
+      const latency = 30 + Math.random() * 50;
       await new Promise(resolve => setTimeout(resolve, latency));
       
-      // Simulate slippage (0.02% - 0.08% against you)
-      const slippagePercent = 0.0002 + Math.random() * 0.0006; // 0.02% - 0.08%
-      const slippageDirection = side === 'buy' ? 1 : -1; // Buy = price goes up, Sell = price goes down
-      const slippagePrice = (price || 0) * (1 + slippageDirection * slippagePercent);
+      // For LIMIT orders: NO slippage, fill at requested price
+      // For MARKET orders: small slippage
+      let filledPrice = price || 0;
+      let makerFee = true;
       
-      // Simulate partial fills (90-100% filled)
-      const fillRate = 0.90 + Math.random() * 0.10;
+      if (!useLimit) {
+        // Market order - small slippage against you
+        const slippagePercent = 0.0001 + Math.random() * 0.0001; // 0.01% - 0.02%
+        const slippageDirection = side === 'buy' ? 1 : -1;
+        filledPrice = (price || 0) * (1 + slippageDirection * slippagePercent);
+        makerFee = false;
+      }
+      
+      // Simulate fills (98-100% for limit orders that cross spread)
+      const fillRate = 0.98 + Math.random() * 0.02;
       const filledQty = quantity * fillRate;
       
-      // Calculate realistic fee (0.035% taker fee for market-like orders)
-      const notionalValue = filledQty * slippagePrice;
-      const takerFeeRate = 0.00035; // 0.035% taker fee
-      const estimatedFee = notionalValue * takerFeeRate;
+      // LIMIT orders get MAKER fee (0.02%), MARKET orders get TAKER fee (0.035%)
+      const notionalValue = filledQty * filledPrice;
+      const feeRate = makerFee ? 0.0002 : 0.00035; // 0.02% maker vs 0.035% taker
+      const estimatedFee = notionalValue * feeRate;
       
-      logger.warn('DRY RUN MODE: Realistic simulation', {
+      logger.warn('DRY RUN MODE: LIMIT order simulation', {
+        orderType: useLimit ? 'LIMIT' : 'MARKET',
         latencyMs: latency.toFixed(0),
-        slippagePercent: (slippagePercent * 100).toFixed(4) + '%',
         requestedPrice: price?.toFixed(2),
-        filledPrice: slippagePrice.toFixed(2),
+        filledPrice: filledPrice.toFixed(2),
         fillRate: (fillRate * 100).toFixed(1) + '%',
+        feeType: makerFee ? 'MAKER 0.02%' : 'TAKER 0.035%',
         fee: estimatedFee.toFixed(4),
       });
       
@@ -190,10 +223,10 @@ class HyperliquidService {
         orderId: `DRY_RUN_${Date.now()}`,
         symbol,
         side,
-        type: price ? 'limit' : 'market',
-        quantity: filledQty, // Partial fill
-        price: slippagePrice, // Slippage applied
-        status: 'filled', // DRY_RUN orders are always considered filled
+        type: useLimit ? 'limit' : 'market',
+        quantity: filledQty,
+        price: filledPrice, // No slippage for LIMIT orders
+        status: 'filled',
         filledQuantity: filledQty,
         timestamp: Date.now(),
         fee: estimatedFee,
