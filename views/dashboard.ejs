@@ -462,13 +462,7 @@
     <script src="/socket.io/socket.io.js"></script>
     <script src="/js/dashboard.js"></script>
     <script>
-        // WebSocket connection with auto-reconnect
-        const socket = io({
-            reconnection: true,
-            reconnectionAttempts: Infinity,
-            reconnectionDelay: 1000,
-            timeout: 5000
-        });
+        // socket is already defined in dashboard.js
 
         const connStatus = document.getElementById('connStatus');
         const logContainer = document.getElementById('log');
