@@ -40,6 +40,50 @@ function renderTrades(trades) {
     }).join('');
 }
 
+// Close all positions
+async function closeAll() {
+    if (!confirm('CLOSE ALL POSITIONS?')) return;
+
+    try {
+        const res = await fetch('/api/trades/close-all', { method: 'POST' });
+        const data = await res.json();
+        console.log('Closed positions:', data);
+        if (typeof addLog === 'function') {
+            addLog('SYSTEM', `Closed ${data.closedCount} positions`, 'sell');
+        }
+    } catch (e) {
+        console.error('Failed to close positions:', e);
+        if (typeof addLog === 'function') {
+            addLog('SYSTEM', 'Failed to close positions', 'sell');
+        }
+    }
+}
+
+// Reset ALL - balance, trades, decisions
+async function resetBalance() {
+    if (!confirm('RESET TUTTO? (Balance, Trades, Decisions)')) return;
+
+    try {
+        const res = await fetch('/api/reset', { method: 'POST' });
+        const data = await res.json();
+        console.log('Reset completed:', data);
+        if (typeof addLog === 'function') {
+            addLog('SYSTEM', 'Reset completo effettuato', 'buy');
+        }
+        document.getElementById('balance').textContent = '$100.00';
+        document.getElementById('winrate').textContent = '0%';
+        document.getElementById('pnl').textContent = '$0.00';
+        document.getElementById('posCount').textContent = '0';
+        document.getElementById('positions').innerHTML = '<div class="empty-state">NO OPEN POSITIONS</div>';
+        document.getElementById('trades').innerHTML = '<div class="empty-state">NO TRADES YET</div>';
+    } catch (e) {
+        console.error('Failed to reset:', e);
+        if (typeof addLog === 'function') {
+            addLog('SYSTEM', 'Failed to reset', 'sell');
+        }
+    }
+}
+
 // Debug connessione
 socket.on('connect', () => {
     console.log('✅ WebSocket connesso:', socket.id);
