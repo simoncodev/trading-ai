@@ -941,12 +941,19 @@ export class WebServer {
             const marginUsed = positionValue / leverage;
             totalMarginUsed += marginUsed;
             
-            // Calcolo P&L grezzo con leva
+            // Trova la posizione live per ottenere il P&L dalla exchange
+            const livePosition = livePositions.find(p => p.symbol === trade.symbol);
             let grossPnl = 0;
-            if (trade.side === 'buy') {
-              grossPnl = (currentPrice - entryPrice) * quantity * leverage;
+            if (livePosition) {
+              // Usa il P&L dalla exchange (già include leva e tutto)
+              grossPnl = livePosition.unrealizedPnl;
             } else {
-              grossPnl = (entryPrice - currentPrice) * quantity * leverage;
+              // Fallback al calcolo locale se non disponibile
+              if (trade.side === 'buy') {
+                grossPnl = (currentPrice - entryPrice) * quantity * leverage;
+              } else {
+                grossPnl = (entryPrice - currentPrice) * quantity * leverage;
+              }
             }
             
             // Stima exit fee (0.035% taker fee su Hyperliquid - Tier 0)

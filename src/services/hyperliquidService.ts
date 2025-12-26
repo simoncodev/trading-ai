@@ -52,6 +52,97 @@ class HyperliquidService {
     return this.metaCache;
   }
 
+  private async getAssetIndex(symbol: string): Promise<number> {
+    try {
+      const meta = await this.getMeta();
+      const coin = this.normalizeSymbol(symbol);
+      const assetIndex = meta.universe.findIndex((u: any) => u.name === coin);
+      if (assetIndex === -1) {
+        throw new Error(`Asset ${coin} not found in universe`);
+      }
+      return assetIndex;
+    } catch (error) {
+      logger.error('Failed to get asset index', { symbol, error: error instanceof Error ? error.message : String(error) });
+      // Fallback: try to map common assets
+      const coin = this.normalizeSymbol(symbol);
+      const commonAssets: Record<string, number> = {
+        'BTC-PERP': 0,
+        'ETH-PERP': 1,
+        'SOL': 2,
+        'ARB': 3,
+        'OP': 4,
+        'MATIC': 5,
+        'AVAX': 6,
+        'LINK': 7,
+        'UNI': 8,
+        'AAVE': 9,
+        'SUSHI': 10,
+        'CRV': 11,
+        'COMP': 12,
+        'MKR': 13,
+        'YFI': 14,
+        'BAL': 15,
+        'REN': 16,
+        'KNC': 17,
+        'ZRX': 18,
+        'BAT': 19,
+        'OMG': 20,
+        'LRC': 21,
+        'REP': 22,
+        'GNT': 23,
+        'STORJ': 24,
+        'ANT': 25,
+        'WAVES': 26,
+        'LSK': 27,
+        'ARK': 28,
+        'STRAT': 29,
+        'XEM': 30,
+        'QTUM': 31,
+        'BTG': 32,
+        'ZEC': 33,
+        'DASH': 34,
+        'XMR': 35,
+        'ETC': 36,
+        'DOGE': 37,
+        'LTC': 38,
+        'XRP': 39,
+        'ADA': 40,
+        'DOT': 41,
+        'TRX': 42,
+        'EOS': 43,
+        'BCH': 44,
+        'BSV': 45,
+        'XLM': 46,
+        'ALGO': 47,
+        'VET': 48,
+        'ICP': 49,
+        'FIL': 50,
+        'THETA': 51,
+        'HBAR': 52,
+        'NEAR': 53,
+        'FLOW': 54,
+        'MANA': 55,
+        'SAND': 56,
+        'AXS': 57,
+        'ENJ': 58,
+        'CHZ': 59,
+        'APE': 60,
+        'GAL': 61,
+        'LDO': 62,
+        'GMT': 63,
+        'JASMY': 64,
+        'DAR': 65,
+        'IMX': 66,
+        'APEX': 67,
+        'FTM': 68,
+        'GALA': 69,
+      };
+      return commonAssets[coin] ?? 0; // Default to 0 (BTC) if not found
+    }
+  }
+
+
+
   private async getPrecision(symbol: string): Promise<number> {
     try {
       const meta = await this.getMeta();
@@ -64,9 +155,31 @@ class HyperliquidService {
     }
   }
 
-  /**
-   * Retry wrapper for API calls with exponential backoff
-   */
+  private async getTickSize(symbol: string): Promise<number> {
+    // Use conservative tick sizes for crypto perpetuals
+    const baseAsset = symbol.split('-')[0];
+    switch (baseAsset) {
+      case 'BTC':
+        return 0.1; // BTC typically has 0.1 tick size
+      case 'ETH':
+        return 0.01; // ETH typically has 0.01 tick size
+      default:
+        return 0.01; // Default conservative tick size
+    }
+  }
+
+  private async getPriceDecimals(symbol: string): Promise<number> {
+    try {
+      const meta = await this.getMeta();
+      const baseAsset = symbol.split('-')[0];
+      const assetInfo = meta.universe.find((u: any) => u.name === baseAsset);
+      // Price decimals are typically szDecimals + 1 or fixed at 5 for crypto
+      return assetInfo ? Math.max(assetInfo.szDecimals + 1, 5) : 5;
+    } catch (error) {
+      logger.warn('Failed to fetch price decimals, defaulting to 5', { error: error instanceof Error ? error.message : String(error) });
+      return 5;
+    }
+  }
   private async retryWithBackoff<T>(
     fn: () => Promise<T>,
     retries = RETRY_CONFIG.maxRetries
@@ -202,8 +315,29 @@ class HyperliquidService {
   }
 
   /**
-   * Gets best bid and ask prices from order book
+   * Round price to valid tick size
    */
+  async roundPriceToTick(symbol: string, price: number): Promise<number> {
+    const tickSize = await this.getTickSize(symbol);
+    const rounded = Math.round(price / tickSize) * tickSize;
+    const priceDecimals = await this.getPriceDecimals(symbol);
+    return parseFloat(rounded.toFixed(priceDecimals));
+  }
+
+  /**
+   * Get minimum order size for an asset
+   */
+  async getMinOrderSize(symbol: string): Promise<number> {
+    try {
+      const meta = await this.getMeta();
+      const baseAsset = symbol.split('-')[0];
+      const assetInfo = meta.universe.find((u: any) => u.name === baseAsset);
+      return assetInfo ? Math.pow(10, -assetInfo.szDecimals) : 0.001;
+    } catch (error) {
+      logger.warn('Failed to fetch min order size, defaulting to 0.001', { error: error instanceof Error ? error.message : String(error) });
+      return 0.001;
+    }
+  }
   async getBestBidAsk(symbol: string): Promise<{ bid: number; ask: number; spread: number }> {
     const coin = this.toOrderBookSymbol(symbol);
     const l2Book = await this.sdk.info.getL2Book(coin);
@@ -297,6 +431,7 @@ class HyperliquidService {
 
     return this.retryWithBackoff(async () => {
       const coin = this.normalizeSymbol(symbol);
+      const assetIndex = await this.getAssetIndex(symbol);
       
       // Get precision and round quantity
       const precision = await this.getPrecision(symbol);
@@ -334,14 +469,16 @@ class HyperliquidService {
 
       // Round price to tick size to ensure divisibility
       if (limitPx) {
-        // Assume tick size of 0.5 for BTC-PERP (common for crypto perpetuals)
-        const tickSize = 0.5;
+        // Get proper tick size based on asset
+        const tickSize = await this.getTickSize(symbol);
         limitPx = Math.round(limitPx / tickSize) * tickSize;
-        // Use 5 decimals as a safe default for price to avoid floatToWire errors
-        limitPx = parseFloat(limitPx.toFixed(5));
+        // Use appropriate decimals for price
+        const priceDecimals = await this.getPriceDecimals(symbol);
+        limitPx = parseFloat(limitPx.toFixed(priceDecimals));
       }
 
       logger.info(`Placing order on Hyperliquid`, {
+        assetIndex,
         coin,
         is_buy: side === 'buy',
         sz: roundedQuantity,
@@ -351,7 +488,7 @@ class HyperliquidService {
 
       // Use the SDK's placeOrder method
       const orderResult = await this.sdk.exchange.placeOrder({
-        coin, // BTC-PERP, ETH-PERP, SOL-PERP, ecc.
+        coin: coin, // Use coin name for API
         is_buy: side === 'buy',
         sz: roundedQuantity,
         limit_px: limitPx ? limitPx.toString() : '0',

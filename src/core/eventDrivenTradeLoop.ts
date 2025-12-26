@@ -85,7 +85,7 @@ const TRADE_CONFIG = {
   
   // ANTI FLIP-FLOP SETTINGS
   TRADE_COOLDOWN_MS: 120000,       // 120 secondi (2 min) cooldown dopo ogni trade
-  SIGNAL_DEBOUNCE_MS: 15000,       // Segnale deve persistere 15 secondi
+  SIGNAL_DEBOUNCE_MS: 5000,        // Segnale deve persistere 5 secondi
   MIN_HOLD_TIME_MS: 60000,         // Mantieni posizione minimo 1 minuto (ridotto)
   SIGNAL_STABILITY_WINDOW: 60000,  // Finestra di 60s per calcolare stabilità
   MAX_SIGNAL_CHANGES: 2,           // Max 2 cambi segnale in 60s per considerarlo stabile
@@ -148,6 +148,7 @@ class EventDrivenTradeLoop extends EventEmitter {
   private lastTradeTime: Map<string, number> = new Map();
   private signalBuffer: Map<string, { signal: TradeSignal; firstSeen: number }> = new Map();
   private currentBalance: number = 0;
+  private activeOrders: Map<string, { side: 'BUY' | 'SELL'; orderId: string; timestamp: number }> = new Map(); // Track active orders per symbol
   
   constructor() {
     super();
@@ -241,6 +242,13 @@ class EventDrivenTradeLoop extends EventEmitter {
   }
 
   /**
+   * Round price to valid tick size for the asset
+   */
+  private async roundPriceToTick(symbol: string, price: number): Promise<number> {
+    return await hyperliquidService.roundPriceToTick(symbol, price);
+  }
+
+  /**
    * Handle snapshot event from multiSymbolTracker
    * This is called on EVERY TICK
    */
@@ -282,8 +290,8 @@ class EventDrivenTradeLoop extends EventEmitter {
         await this.checkEntryConditions(tradeSignal);
       }
 
-      // 5. Update P&L for all positions
-      this.updateAllPositionsPnl();
+      // 5. Update P&L for all positions (disabled - using exchange P&L)
+      // await this.updateAllPositionsPnl();
 
     } catch (error) {
       logger.error(`[EventLoop] Error processing snapshot for ${symbol}:`, error);
@@ -311,6 +319,13 @@ class EventDrivenTradeLoop extends EventEmitter {
     // Check max positions
     if (this.positions.size >= TRADE_CONFIG.MAX_POSITIONS) {
       logger.debug(`[EventLoop] Max positions reached (${TRADE_CONFIG.MAX_POSITIONS})`);
+      return;
+    }
+
+    // Check if there's already an active order for this symbol and side
+    const activeOrder = this.activeOrders.get(signal.symbol);
+    if (activeOrder && activeOrder.side === signal.action) {
+      logger.debug(`[EventLoop] Active order already exists for ${signal.symbol} ${signal.action}`);
       return;
     }
 
@@ -484,11 +499,30 @@ class EventDrivenTradeLoop extends EventEmitter {
    * Open a new position
    */
   private async openPosition(signal: TradeSignal): Promise<void> {
-    const { symbol, action, price, confidence, reasoning } = signal;
+    const { symbol, action, price: rawPrice, confidence, reasoning } = signal;
     
-    // Calculate position size
-    const positionValue = this.currentBalance * TRADE_CONFIG.POSITION_SIZE_PERCENT;
-    const quantity = positionValue / price;
+    // Round price to valid tick size
+    const price = await this.roundPriceToTick(symbol, rawPrice);
+    
+    // Calculate position size - ensure minimum order size
+    let positionValue = this.currentBalance * TRADE_CONFIG.POSITION_SIZE_PERCENT;
+    
+    // Calculate quantity and ensure it's above minimum
+    let quantity = positionValue / price;
+    
+    // Get minimum order size for this asset
+    const minOrderSize = await hyperliquidService.getMinOrderSize(symbol);
+    if (quantity < minOrderSize) {
+      // If quantity is too small, use minimum order size
+      quantity = minOrderSize;
+      positionValue = quantity * price;
+      logger.info(`Adjusted position size to minimum order size`, { 
+        symbol, 
+        originalQuantity: (this.currentBalance * TRADE_CONFIG.POSITION_SIZE_PERCENT / price), 
+        adjustedQuantity: quantity,
+        minOrderSize 
+      });
+    }
 
     // Calculate TP/SL prices
     const tpMultiplier = action === 'BUY' 
@@ -516,6 +550,13 @@ class EventDrivenTradeLoop extends EventEmitter {
 
     // Execute on exchange if not DRY_RUN
     if (!config.system.dryRun) {
+      // Mark order as active
+      this.activeOrders.set(symbol, { 
+        side: action as 'BUY' | 'SELL', 
+        orderId: `order_${Date.now()}`, 
+        timestamp: Date.now() 
+      });
+
       try {
         // Set leverage first
         await hyperliquidService.setLeverage(symbol, TRADE_CONFIG.LEVERAGE);
@@ -533,6 +574,8 @@ class EventDrivenTradeLoop extends EventEmitter {
         position.stopLossPrice = position.entryPrice * slMultiplier;
         
       } catch (error) {
+        // Remove active order on failure
+        this.activeOrders.delete(symbol);
         logger.error('[EventLoop] Failed to place order on exchange. Aborting trade.', error);
         return; // ABORT: Do not save to DB, do not update memory
       }
@@ -569,6 +612,9 @@ class EventDrivenTradeLoop extends EventEmitter {
     } catch (error) {
       logger.error('[EventLoop] Failed to save position to DB:', error);
     }
+
+    // Remove active order since position is now open
+    this.activeOrders.delete(symbol);
   }
 
   /**
@@ -659,26 +705,15 @@ class EventDrivenTradeLoop extends EventEmitter {
     } catch (error) {
       logger.error('[EventLoop] Failed to update DB on close:', error);
     }
+
+    // Remove any active order for this symbol
+    this.activeOrders.delete(symbol);
   }
 
   /**
    * Update P&L for all open positions
    */
-  private updateAllPositionsPnl(): void {
-    for (const [symbol, position] of this.positions.entries()) {
-      const snapshot = multiSymbolTracker.getSnapshot(symbol);
-      if (snapshot) {
-        const currentPrice = snapshot.currentPrice;
-        const priceDiff = position.side === 'BUY'
-          ? currentPrice - position.entryPrice
-          : position.entryPrice - currentPrice;
-        position.unrealizedPnl = priceDiff * position.quantity * position.leverage;
-      }
-    }
 
-    // Emit positions update
-    this.emit('positions', this.getPositionsSummary());
-  }
 
   /**
    * Get positions summary for dashboard
@@ -749,10 +784,10 @@ class EventDrivenTradeLoop extends EventEmitter {
         dbMap.set(trade.symbol, trade);
       }
 
-      // Add 30s timeout to prevent hanging
+      // Add 60s timeout to prevent hanging
       const account = await Promise.race([
         hyperliquidService.getAccount(),
-        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout syncing positions from Hyperliquid')), 30000))
+        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout syncing positions from Hyperliquid')), 60000))
       ]);
       
       // Update Balance from Exchange
