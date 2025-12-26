@@ -89,14 +89,14 @@ interface SymbolState {
 // ========================================
 
 const CONFIG = {
-  SNAPSHOT_INTERVAL_MS: 500,
+  SNAPSHOT_INTERVAL_MS: 1000,
   POOL_MEMORY_MS: 30000,
   MAX_DISTANCE_PERCENT: 2.0,
   ORDER_BOOK_DEPTH: 100,
   SPOOFING_DISAPPEAR_THRESHOLD: 3,
   SPOOFING_TIME_WINDOW_MS: 5000,
   MIN_SIZE_FOR_SPOOFING: 0.3,
-  WAVE_HISTORY_LENGTH: 20,
+  WAVE_HISTORY_LENGTH: 10,
   MOMENTUM_WINDOW: 5,
   // Filtro falsi positivi - AGGRESSIVO per wave surfing
   MIN_DOMINANCE_FOR_SIGNAL: 0.52,  // 52% dominanza minima (era 60%)
@@ -177,7 +177,10 @@ class MultiSymbolLiquidityTracker extends EventEmitter {
         clearInterval(state.intervalId);
       }
       state.isRunning = false;
-      logger.info(`[MultiSymbolTracker] Stopped tracking ${symbol}`);
+      // Clean up memory
+      this.symbolStates.delete(symbol);
+      this.signalHistory.delete(symbol);
+      logger.info(`[MultiSymbolTracker] Stopped tracking ${symbol} and cleaned up memory`);
     }
   }
 
@@ -217,9 +220,12 @@ class MultiSymbolLiquidityTracker extends EventEmitter {
       const newAlerts = this.detectSpoofing(symbol, currentBidPools, currentAskPools, timestamp);
       state.spoofingAlerts.push(...newAlerts);
 
-      // Mantieni solo alert recenti (ultimo minuto)
+      // Mantieni solo alert recenti (ultimo minuto) e limita a 100 max
       const recentThreshold = timestamp - 60000;
       state.spoofingAlerts = state.spoofingAlerts.filter(a => a.timestamp > recentThreshold);
+      if (state.spoofingAlerts.length > 100) {
+        state.spoofingAlerts = state.spoofingAlerts.slice(-100);
+      }
 
       // Calcola wave analysis
       const { waveDirection, waveStrength, waveMomentum } = this.analyzeWave(state);

@@ -115,6 +115,11 @@ function recordSignal(symbol: string, action: 'BUY' | 'SELL' | 'WAIT'): void {
     history.push({ action, timestamp: now });
   }
   
+  // Limita la dimensione massima a 100 entries per simbolo per evitare accumulo eccessivo
+  if (history.length > 100) {
+    history.shift();
+  }
+  
   // Pulisci entries vecchie (oltre 2 minuti)
   const cutoff = now - 120000;
   while (history.length > 0 && history[0].timestamp < cutoff) {
@@ -149,6 +154,7 @@ class EventDrivenTradeLoop extends EventEmitter {
   }
 
   private syncInterval: NodeJS.Timeout | null = null;
+  private memoryMonitorInterval: NodeJS.Timeout | null = null;
 
   /**
    * Start the event-driven trade loop
@@ -174,6 +180,10 @@ class EventDrivenTradeLoop extends EventEmitter {
       this.syncInterval = setInterval(() => this.syncWithExchange(), 30000);
       logger.info('[EventLoop] Started periodic exchange sync (30s)');
     }
+
+    // Start periodic memory monitoring (every 10 minutes)
+    this.memoryMonitorInterval = setInterval(() => this.logMemoryUsage(), 10 * 60 * 1000);
+    logger.info('[EventLoop] Started periodic memory monitoring (10min)');
 
     // Subscribe to multiSymbolTracker events
     multiSymbolTracker.on('snapshot', this.onSnapshot.bind(this));
@@ -212,7 +222,22 @@ class EventDrivenTradeLoop extends EventEmitter {
       clearInterval(this.syncInterval);
       this.syncInterval = null;
     }
+    if (this.memoryMonitorInterval) {
+      clearInterval(this.memoryMonitorInterval);
+      this.memoryMonitorInterval = null;
+    }
     multiSymbolTracker.removeListener('snapshot', this.onSnapshot.bind(this));
+  }
+
+  /**
+   * Log current memory usage for monitoring
+   */
+  private logMemoryUsage(): void {
+    const memUsage = process.memoryUsage();
+    logger.info('[Memory] Usage - RSS: ' + (memUsage.rss / 1024 / 1024).toFixed(2) + 'MB, ' +
+               'Heap Used: ' + (memUsage.heapUsed / 1024 / 1024).toFixed(2) + 'MB, ' +
+               'Heap Total: ' + (memUsage.heapTotal / 1024 / 1024).toFixed(2) + 'MB, ' +
+               'External: ' + (memUsage.external / 1024 / 1024).toFixed(2) + 'MB');
   }
 
   /**

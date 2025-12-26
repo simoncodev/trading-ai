@@ -51,6 +51,9 @@ export class WebServer {
     this.setupMiddleware();
     this.setupRoutes();
     this.setupSocketIO();
+
+    // Pulizia periodica degli ordini pending vecchi (ogni 5 minuti)
+    setInterval(() => this.cleanupOldPendingOrders(), 5 * 60 * 1000);
   }
 
   /**
@@ -1097,6 +1100,20 @@ export class WebServer {
    */
   public static clearPendingOrders(): void {
     WebServer.pendingOrders.clear();
+  }
+
+  /**
+   * Cleanup old pending orders (older than 10 minutes)
+   */
+  private cleanupOldPendingOrders(): void {
+    const now = Date.now();
+    const cutoff = now - 10 * 60 * 1000; // 10 minuti
+    for (const [id, order] of WebServer.pendingOrders.entries()) {
+      if (order.createdAt < cutoff) {
+        WebServer.pendingOrders.delete(id);
+        logger.debug(`Cleaned up old pending order: ${id}`);
+      }
+    }
   }
 
   /**
