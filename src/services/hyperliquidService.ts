@@ -160,7 +160,7 @@ class HyperliquidService {
     const baseAsset = symbol.split('-')[0];
     switch (baseAsset) {
       case 'BTC':
-        return 0.1; // BTC typically has 0.1 tick size
+        return 0.5; // BTC typically has 0.5 tick size
       case 'ETH':
         return 0.01; // ETH typically has 0.01 tick size
       default:
@@ -449,7 +449,7 @@ class HyperliquidService {
       if (!useLimit || !price) {
         try {
           const book = await this.getBestBidAsk(symbol);
-          const slippage = 0.05; // 5% slippage tolerance for market orders
+          const slippage = 0.005; // 0.5% slippage tolerance for market orders
           
           if (side === 'buy') {
              // Buy: price must be higher than ask
@@ -471,7 +471,8 @@ class HyperliquidService {
       if (limitPx) {
         // Get proper tick size based on asset
         const tickSize = await this.getTickSize(symbol);
-        limitPx = Math.round(limitPx / tickSize) * tickSize;
+        // Use proper rounding to avoid floating point issues
+        limitPx = parseFloat((limitPx / tickSize).toFixed(0)) * tickSize;
         // Use appropriate decimals for price
         const priceDecimals = await this.getPriceDecimals(symbol);
         limitPx = parseFloat(limitPx.toFixed(priceDecimals));
