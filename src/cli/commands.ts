@@ -1,6 +1,6 @@
 import { logger } from '../core/logger';
 import { tradeLoop } from '../core/tradeLoop';
-import { positionManager } from '../core/positionManager';
+import { eventDrivenTradeLoop } from '../core/eventDrivenTradeLoop';
 import { backtestService } from '../strategies/backtest';
 import { marketDataService } from '../services/marketDataService';
 import { indicatorService } from '../strategies/indicators';
@@ -8,6 +8,8 @@ import { aiEngine } from '../ai/aiEngine';
 import { config } from '../utils/config';
 import { BacktestConfig } from '../types';
 import { formatCurrency, formatPercentage } from '../utils/math';
+import { spooferProfiler } from '../services/spooferProfiler';
+import WebServer from '../web/server';
 
 /**
  * CLI Commands for the Trading AI Agent
@@ -35,25 +37,45 @@ export class Commands {
       console.log('');
     }
 
+    // Reference to web server for cleanup
+    let webServer: WebServer | null = null;
+
     try {
-      await tradeLoop.start();
+      // Start Web Dashboard Server (this also starts the event-driven trade loop)
+      const port = parseInt(process.env.WEB_PORT || '3000');
+      webServer = new WebServer(port);
+      await webServer.start();
+      logger.info(`🌐 Web dashboard started on http://localhost:${port}`);
+      logger.info(`🚀 Event-driven trading is now ACTIVE (real-time, no interval)`);
       
-      // Start position manager for automatic SL/TP/Trailing Stop
-      positionManager.start();
+      // Export webServer for other modules
+      (global as any).webServer = webServer;
+      
+      // Start spoofer profiler for fingerprinting
+      logger.info(`🔍 Starting spoofer profiler...`);
+      spooferProfiler.start();
+      
+      // NOTE: tradeLoop.start() removed - using eventDrivenTradeLoop instead
+      // The eventDrivenTradeLoop is started inside WebServer.start()
+      
+      // Position manager not needed - eventDrivenTradeLoop handles TP/SL
+      // positionManager.start();
 
       // Keep the process running
-      process.on('SIGINT', () => {
+      process.on('SIGINT', async () => {
         console.log('\n\n⏹️  Shutting down gracefully...');
-        tradeLoop.stop();
-        positionManager.stop();
+        if (webServer) await webServer.stop();
+        spooferProfiler.stop();
+        eventDrivenTradeLoop.stop();
         this.printStatistics();
         process.exit(0);
       });
 
-      process.on('SIGTERM', () => {
+      process.on('SIGTERM', async () => {
         console.log('\n\n⏹️  Shutting down gracefully...');
-        tradeLoop.stop();
-        positionManager.stop();
+        if (webServer) await webServer.stop();
+        spooferProfiler.stop();
+        eventDrivenTradeLoop.stop();
         this.printStatistics();
         process.exit(0);
       });

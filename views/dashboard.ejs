@@ -447,11 +447,13 @@
         <div class="btn-row">
             <button class="btn" onclick="location.href='/trades'">TRADES</button>
             <button class="btn" onclick="location.href='/performance'">STATS</button>
+            <button class="btn" style="border-color: #0ff; color: #0ff;"
+                onclick="location.href='/liquidity'">🏄 LIQUIDITY</button>
             <button class="btn" style="border-color: #0f0; color: #0f0;"
                 onclick="location.href='/backtest'">BACKTEST</button>
-            <button class="btn danger" onclick="closeAll()">CLOSE ALL</button>
         </div>
         <div class="btn-row" style="margin-top: 4px;">
+            <button class="btn danger" onclick="closeAll()">CLOSE ALL</button>
             <button class="btn" style="border-color: #ff0; color: #ff0;" onclick="resetBalance()">RESET $</button>
         </div>
     </div>
@@ -463,6 +465,7 @@
     <script src="/js/dashboard.js"></script>
     <script>
         // socket is already defined in dashboard.js
+        // recentlyClosedTrades is already defined in dashboard.js
 
         const connStatus = document.getElementById('connStatus');
         const logContainer = document.getElementById('log');
@@ -491,8 +494,13 @@
                 (parseFloat(stats.win_rate) >= 50 ? 'positive' : 'negative');
         });
 
-        // Positions update
+        // Positions update - filter out recently closed trades to prevent ghost positions
         socket.on('positions:update', (data) => {
+            // Filter out recently closed trades
+            if (data.trades && recentlyClosedTrades) {
+                data.trades = data.trades.filter(t => !recentlyClosedTrades.has(t.trade_id));
+            }
+            
             // Update timestamp
             document.getElementById('timestamp').textContent =
                 new Date().toLocaleTimeString('it-IT');
@@ -559,6 +567,11 @@
 
         // Trade closed event
         socket.on('trade:closed', (data) => {
+            // Track this trade as recently closed to prevent ghost positions
+            if (data.tradeId && recentlyClosedTrades) {
+                recentlyClosedTrades.set(data.tradeId, Date.now());
+            }
+            
             const pnl = data.pnl || 0;
             const symbol = (data.symbol || '').replace('-USDC', '');
             addLog(symbol, `CLOSED ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`, pnl >= 0 ? 'buy' : 'sell');
@@ -569,6 +582,11 @@
 
         // Position closed event (from PositionManager)
         socket.on('position:closed', (data) => {
+            // Track this trade as recently closed to prevent ghost positions
+            if (data.tradeId && recentlyClosedTrades) {
+                recentlyClosedTrades.set(data.tradeId, Date.now());
+            }
+            
             const pnl = data.pnl || 0;
             const symbol = (data.symbol || '').replace('-USDC', '');
             const reason = data.reason || 'closed';

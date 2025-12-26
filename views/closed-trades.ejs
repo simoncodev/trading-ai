@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Closed Trades History</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --bg: #0d1117;
+            --bg-card: #161b22;
+            --bg-hover: #21262d;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --text-dim: #8b949e;
+            --green: #3fb950;
+            --green-bg: rgba(63,185,80,0.15);
+            --red: #f85149;
+            --red-bg: rgba(248,81,73,0.15);
+            --blue: #58a6ff;
+            --yellow: #d29922;
+            --purple: #a371f7;
+        }
+        
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            font-size: 13px;
+        }
+
+        /* HEADER */
+        header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--blue);
+        }
+
+        .logo-icon { font-size: 24px; }
+
+        .nav-links {
+            display: flex;
+            gap: 8px;
+        }
+
+        .nav-btn {
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-dim);
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .nav-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text);
+        }
+
+        .nav-btn.active {
+            background: var(--blue);
+            border-color: var(--blue);
+            color: #fff;
+        }
+
+        /* MAIN */
+        main {
+            padding: 24px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        /* STATS CARDS */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .stat-label {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        .stat-value.positive { color: var(--green); }
+        .stat-value.negative { color: var(--red); }
+        .stat-value.highlight { color: var(--blue); }
+        .stat-value.warning { color: var(--yellow); }
+
+        .stat-sub {
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-top: 4px;
+        }
+
+        /* SECTION CARD */
+        .section-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-hover);
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* FILTERS */
+        .filters {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg);
+        }
+
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .filter-label {
+            font-size: 11px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        .filter-select, .filter-input {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 6px 10px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 12px;
+        }
+
+        .filter-select:focus, .filter-input:focus {
+            outline: none;
+            border-color: var(--blue);
+        }
+
+        .filter-btn {
+            padding: 6px 14px;
+            background: var(--blue);
+            border: none;
+            border-radius: 4px;
+            color: #fff;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .filter-btn:hover {
+            opacity: 0.9;
+        }
+
+        .filter-btn.secondary {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        /* SYMBOL STATS TABLE */
+        .symbol-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .symbol-table th, .symbol-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .symbol-table th {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            font-weight: 600;
+            letter-spacing: 1px;
+            background: var(--bg);
+        }
+
+        .symbol-table tr:hover td {
+            background: var(--bg-hover);
+        }
+
+        .symbol-table .sym {
+            font-weight: 700;
+            color: var(--yellow);
+        }
+
+        /* TRADES TABLE */
+        .trades-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .trades-table th, .trades-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .trades-table th {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            font-weight: 600;
+            letter-spacing: 1px;
+            background: var(--bg);
+            position: sticky;
+            top: 60px;
+            cursor: pointer;
+        }
+
+        .trades-table th:hover {
+            color: var(--text);
+        }
+
+        .trades-table th.sorted {
+            color: var(--blue);
+        }
+
+        .trades-table th .sort-icon {
+            margin-left: 4px;
+            opacity: 0.5;
+        }
+
+        .trades-table th.sorted .sort-icon {
+            opacity: 1;
+        }
+
+        .trades-table tr:hover td {
+            background: var(--bg-hover);
+        }
+
+        .trades-table .sym {
+            font-weight: 700;
+            color: var(--yellow);
+        }
+
+        .trades-table .side-buy {
+            color: var(--green);
+            background: var(--green-bg);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .trades-table .side-sell {
+            color: var(--red);
+            background: var(--red-bg);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .pnl-positive { color: var(--green); }
+        .pnl-negative { color: var(--red); }
+
+        .duration {
+            color: var(--text-dim);
+            font-size: 11px;
+        }
+
+        /* PAGINATION */
+        .pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+        }
+
+        .page-info {
+            font-size: 12px;
+            color: var(--text-dim);
+        }
+
+        .page-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .page-btn {
+            padding: 6px 12px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 12px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+
+        .page-btn:hover:not(:disabled) {
+            background: var(--bg-hover);
+            border-color: var(--text-dim);
+        }
+
+        .page-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .page-btn.active {
+            background: var(--blue);
+            border-color: var(--blue);
+            color: #fff;
+        }
+
+        /* EXPORT BUTTON */
+        .export-btn {
+            padding: 8px 16px;
+            background: var(--purple);
+            border: none;
+            border-radius: 6px;
+            color: #fff;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .export-btn:hover {
+            opacity: 0.9;
+        }
+
+        /* RESPONSIVE */
+        @media (max-width: 768px) {
+            header {
+                flex-direction: column;
+                gap: 12px;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .filters {
+                flex-direction: column;
+            }
+            
+            .trades-table {
+                font-size: 11px;
+            }
+            
+            .trades-table th, .trades-table td {
+                padding: 8px;
+            }
+        }
+
+        /* EMPTY STATE */
+        .empty-state {
+            padding: 60px 20px;
+            text-align: center;
+            color: var(--text-dim);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <span class="logo-icon">📊</span>
+            <span>CLOSED TRADES HISTORY</span>
+        </div>
+        <div class="nav-links">
+            <a href="/" class="nav-btn">◄ Dashboard</a>
+            <a href="/trades" class="nav-btn">All Trades</a>
+            <a href="/performance" class="nav-btn">Performance</a>
+        </div>
+    </header>
+
+    <main>
+        <!-- STATS OVERVIEW -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Total Closed</div>
+                <div class="stat-value highlight"><%= stats.total_trades || 0 %></div>
+                <div class="stat-sub">trades completed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total P&L</div>
+                <div class="stat-value <%= parseFloat(stats.total_pnl || 0) >= 0 ? 'positive' : 'negative' %>">
+                    $<%= parseFloat(stats.total_pnl || 0).toFixed(2) %>
+                </div>
+                <div class="stat-sub">net profit/loss</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Win Rate</div>
+                <div class="stat-value <%= parseFloat(stats.win_rate || 0) >= 50 ? 'positive' : 'negative' %>">
+                    <%= stats.win_rate || '0.00' %>%
+                </div>
+                <div class="stat-sub"><%= stats.winning_trades || 0 %>W / <%= stats.losing_trades || 0 %>L</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Profit Factor</div>
+                <div class="stat-value <%= parseFloat(stats.profit_factor || 0) >= 1 ? 'positive' : 'negative' %>">
+                    <%= stats.profit_factor || '0.00' %>
+                </div>
+                <div class="stat-sub">gross profit / loss</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Win</div>
+                <div class="stat-value positive">$<%= parseFloat(stats.avg_win || 0).toFixed(2) %></div>
+                <div class="stat-sub">best: $<%= parseFloat(stats.best_trade || 0).toFixed(2) %></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Loss</div>
+                <div class="stat-value negative">$<%= parseFloat(stats.avg_loss || 0).toFixed(2) %></div>
+                <div class="stat-sub">worst: $<%= parseFloat(stats.worst_trade || 0).toFixed(2) %></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg P&L %</div>
+                <div class="stat-value <%= parseFloat(stats.avg_pnl_pct || 0) >= 0 ? 'positive' : 'negative' %>">
+                    <%= parseFloat(stats.avg_pnl_pct || 0).toFixed(2) %>%
+                </div>
+                <div class="stat-sub">per trade</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Duration</div>
+                <div class="stat-value warning"><%= Math.round(parseFloat(stats.avg_duration_minutes || 0)) %>m</div>
+                <div class="stat-sub">time in position</div>
+            </div>
+        </div>
+
+        <!-- STATS BY SYMBOL -->
+        <div class="section-card">
+            <div class="section-header">
+                <div class="section-title">📈 Performance by Symbol</div>
+            </div>
+            <% if (symbolStats.length === 0) { %>
+                <div class="empty-state">
+                    <div class="empty-state-icon">📭</div>
+                    <div>No closed trades yet</div>
+                </div>
+            <% } else { %>
+                <table class="symbol-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Trades</th>
+                            <th>Wins</th>
+                            <th>Losses</th>
+                            <th>Win Rate</th>
+                            <th>Total P&L</th>
+                            <th>Avg P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <% symbolStats.forEach(s => { %>
+                            <tr>
+                                <td class="sym"><%= s.symbol.replace('-USDC', '') %></td>
+                                <td><%= s.trade_count %></td>
+                                <td class="pnl-positive"><%= s.wins %></td>
+                                <td class="pnl-negative"><%= s.losses %></td>
+                                <td class="<%= parseFloat(s.win_rate) >= 50 ? 'pnl-positive' : 'pnl-negative' %>"><%= parseFloat(s.win_rate).toFixed(1) %>%</td>
+                                <td class="<%= parseFloat(s.total_pnl) >= 0 ? 'pnl-positive' : 'pnl-negative' %>">$<%= parseFloat(s.total_pnl).toFixed(2) %></td>
+                                <td class="<%= parseFloat(s.avg_pnl) >= 0 ? 'pnl-positive' : 'pnl-negative' %>">$<%= parseFloat(s.avg_pnl).toFixed(2) %></td>
+                            </tr>
+                        <% }) %>
+                    </tbody>
+                </table>
+            <% } %>
+        </div>
+
+        <!-- TRADES LIST -->
+        <div class="section-card">
+            <div class="section-header">
+                <div class="section-title">📋 All Closed Trades</div>
+                <button class="export-btn" onclick="exportCSV()">⬇ Export CSV</button>
+            </div>
+            
+            <!-- FILTERS -->
+            <form class="filters" method="GET" action="/closed-trades">
+                <div class="filter-group">
+                    <span class="filter-label">Symbol</span>
+                    <select name="symbol" class="filter-select">
+                        <option value="">All</option>
+                        <% symbols.forEach(sym => { %>
+                            <option value="<%= sym %>" <%= currentFilters.symbol === sym ? 'selected' : '' %>><%= sym.replace('-USDC', '') %></option>
+                        <% }) %>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-label">From</span>
+                    <input type="date" name="startDate" class="filter-input" value="<%= currentFilters.startDate || '' %>">
+                </div>
+                <div class="filter-group">
+                    <span class="filter-label">To</span>
+                    <input type="date" name="endDate" class="filter-input" value="<%= currentFilters.endDate || '' %>">
+                </div>
+                <div class="filter-group">
+                    <span class="filter-label">Sort</span>
+                    <select name="sortBy" class="filter-select">
+                        <option value="closed_at" <%= currentFilters.sortBy === 'closed_at' ? 'selected' : '' %>>Close Date</option>
+                        <option value="pnl" <%= currentFilters.sortBy === 'pnl' ? 'selected' : '' %>>P&L</option>
+                        <option value="pnl_percentage" <%= currentFilters.sortBy === 'pnl_percentage' ? 'selected' : '' %>>P&L %</option>
+                        <option value="entry_price" <%= currentFilters.sortBy === 'entry_price' ? 'selected' : '' %>>Entry Price</option>
+                        <option value="quantity" <%= currentFilters.sortBy === 'quantity' ? 'selected' : '' %>>Quantity</option>
+                    </select>
+                    <select name="sortOrder" class="filter-select">
+                        <option value="DESC" <%= currentFilters.sortOrder === 'DESC' ? 'selected' : '' %>>Desc</option>
+                        <option value="ASC" <%= currentFilters.sortOrder === 'ASC' ? 'selected' : '' %>>Asc</option>
+                    </select>
+                </div>
+                <button type="submit" class="filter-btn">Apply</button>
+                <a href="/closed-trades" class="filter-btn secondary">Reset</a>
+            </form>
+
+            <% if (trades.length === 0) { %>
+                <div class="empty-state">
+                    <div class="empty-state-icon">📭</div>
+                    <div>No closed trades found</div>
+                </div>
+            <% } else { %>
+                <div style="overflow-x: auto;">
+                    <table class="trades-table" id="tradesTable">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th>Entry Price</th>
+                                <th>Exit Price</th>
+                                <th>Qty</th>
+                                <th>P&L</th>
+                                <th>P&L %</th>
+                                <th>Fee</th>
+                                <th>Opened</th>
+                                <th>Closed</th>
+                                <th>Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% trades.forEach(trade => { 
+                                const pnl = parseFloat(trade.pnl || 0);
+                                const pnlPct = parseFloat(trade.pnl_percentage || 0);
+                                const openDate = new Date(trade.executed_at);
+                                const closeDate = trade.closed_at ? new Date(trade.closed_at) : null;
+                                const durationMs = closeDate ? closeDate - openDate : 0;
+                                const durationMin = Math.round(durationMs / 60000);
+                                const durationStr = durationMin >= 60 ? Math.floor(durationMin/60) + 'h ' + (durationMin%60) + 'm' : durationMin + 'm';
+                            %>
+                                <tr>
+                                    <td class="sym"><%= trade.symbol.replace('-USDC', '') %></td>
+                                    <td><span class="side-<%= trade.side %>"><%= trade.side.toUpperCase() %></span></td>
+                                    <td>$<%= parseFloat(trade.entry_price).toFixed(4) %></td>
+                                    <td>$<%= trade.exit_price ? parseFloat(trade.exit_price).toFixed(4) : '---' %></td>
+                                    <td><%= parseFloat(trade.quantity).toFixed(4) %></td>
+                                    <td class="<%= pnl >= 0 ? 'pnl-positive' : 'pnl-negative' %>">
+                                        <%= pnl >= 0 ? '+' : '' %>$<%= pnl.toFixed(2) %>
+                                    </td>
+                                    <td class="<%= pnlPct >= 0 ? 'pnl-positive' : 'pnl-negative' %>">
+                                        <%= pnlPct >= 0 ? '+' : '' %><%= pnlPct.toFixed(2) %>%
+                                    </td>
+                                    <td>$<%= parseFloat(trade.fee || 0).toFixed(4) %></td>
+                                    <td><%= openDate.toLocaleString('it-IT', {day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) %></td>
+                                    <td><%= closeDate ? closeDate.toLocaleString('it-IT', {day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '---' %></td>
+                                    <td class="duration"><%= durationStr %></td>
+                                </tr>
+                            <% }) %>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- PAGINATION -->
+                <div class="pagination">
+                    <div class="page-info">
+                        Showing <%= ((currentPage - 1) * perPage) + 1 %>-<%= Math.min(currentPage * perPage, total) %> of <%= total %> trades
+                    </div>
+                    <div class="page-buttons">
+                        <% const baseUrl = `/closed-trades?symbol=${currentFilters.symbol || ''}&startDate=${currentFilters.startDate || ''}&endDate=${currentFilters.endDate || ''}&sortBy=${currentFilters.sortBy || 'closed_at'}&sortOrder=${currentFilters.sortOrder || 'DESC'}`; %>
+                        <a href="<%= baseUrl %>&page=1" class="page-btn" <%= currentPage <= 1 ? 'disabled' : '' %>>« First</a>
+                        <a href="<%= baseUrl %>&page=<%= currentPage - 1 %>" class="page-btn" <%= currentPage <= 1 ? 'disabled' : '' %>>‹ Prev</a>
+                        
+                        <% for (let p = Math.max(1, currentPage - 2); p <= Math.min(totalPages, currentPage + 2); p++) { %>
+                            <a href="<%= baseUrl %>&page=<%= p %>" class="page-btn <%= p === currentPage ? 'active' : '' %>"><%= p %></a>
+                        <% } %>
+                        
+                        <a href="<%= baseUrl %>&page=<%= currentPage + 1 %>" class="page-btn" <%= currentPage >= totalPages ? 'disabled' : '' %>>Next ›</a>
+                        <a href="<%= baseUrl %>&page=<%= totalPages %>" class="page-btn" <%= currentPage >= totalPages ? 'disabled' : '' %>>Last »</a>
+                    </div>
+                </div>
+            <% } %>
+        </div>
+    </main>
+
+    <script>
+        // Export trades to CSV
+        function exportCSV() {
+            const table = document.getElementById('tradesTable');
+            if (!table) return;
+            
+            const rows = table.querySelectorAll('tr');
+            let csv = [];
+            
+            rows.forEach(row => {
+                const cols = row.querySelectorAll('th, td');
+                const rowData = [];
+                cols.forEach(col => {
+                    let text = col.innerText.replace(/"/g, '""');
+                    rowData.push(`"${text}"`);
+                });
+                csv.push(rowData.join(','));
+            });
+            
+            const csvContent = csv.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.setAttribute('href', url);
+            link.setAttribute('download', `closed_trades_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+</body>
+</html>

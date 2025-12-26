@@ -291,6 +291,7 @@ export interface HyperliquidConfig {
   apiKey: string;
   secret: string;
   apiUrl: string;
+  walletAddress: string;
 }
 
 export interface AIConfig {

@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spike Analyzer - Trading AI</title>
+  <style>
+    :root {
+      --bg-primary: #0d1117;
+      --bg-secondary: #161b22;
+      --bg-tertiary: #21262d;
+      --border-color: #30363d;
+      --text-primary: #f0f6fc;
+      --text-secondary: #8b949e;
+      --text-muted: #6e7681;
+      --accent-green: #3fb950;
+      --accent-red: #f85149;
+      --accent-yellow: #d29922;
+      --accent-blue: #58a6ff;
+      --accent-purple: #a371f7;
+    }
+    
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-color);
+    }
+    
+    .header h1 {
+      font-size: 24px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    .header h1 span { font-size: 28px; }
+    
+    .nav-links {
+      display: flex;
+      gap: 16px;
+    }
+    
+    .nav-links a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+    
+    .nav-links a:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+    
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+    
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .full-width {
+      grid-column: 1 / -1;
+    }
+    
+    /* Signal Box */
+    .signal-box {
+      text-align: center;
+      padding: 30px;
+    }
+    
+    .signal-direction {
+      font-size: 48px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    
+    .signal-direction.buy { color: var(--accent-green); }
+    .signal-direction.sell { color: var(--accent-red); }
+    .signal-direction.wait { color: var(--text-muted); }
+    
+    .signal-confidence {
+      font-size: 24px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    
+    .signal-pattern {
+      font-size: 14px;
+      color: var(--accent-purple);
+      padding: 6px 12px;
+      background: rgba(163, 113, 247, 0.1);
+      border-radius: 20px;
+      display: inline-block;
+      margin-bottom: 12px;
+    }
+    
+    .signal-reasoning {
+      font-size: 13px;
+      color: var(--text-secondary);
+      max-width: 400px;
+      margin: 0 auto;
+    }
+    
+    /* Behavior Stats */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    
+    .stat-item {
+      text-align: center;
+      padding: 16px;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+    }
+    
+    .stat-value {
+      font-size: 28px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    
+    /* Price Chart */
+    .chart-container {
+      height: 300px;
+      position: relative;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    
+    #priceChart {
+      width: 100%;
+      height: 100%;
+    }
+    
+    .chart-overlay {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      display: flex;
+      gap: 16px;
+    }
+    
+    .chart-stat {
+      background: rgba(0, 0, 0, 0.6);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    
+    .chart-stat .value {
+      font-weight: 600;
+    }
+    
+    .chart-stat.up .value { color: var(--accent-green); }
+    .chart-stat.down .value { color: var(--accent-red); }
+    
+    /* Spikes Table */
+    .spikes-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    
+    .spikes-table th,
+    .spikes-table td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+    }
+    
+    .spikes-table th {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+    }
+    
+    .spikes-table td {
+      font-size: 14px;
+    }
+    
+    .direction-badge {
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    
+    .direction-badge.up {
+      background: rgba(63, 185, 80, 0.15);
+      color: var(--accent-green);
+    }
+    
+    .direction-badge.down {
+      background: rgba(248, 81, 73, 0.15);
+      color: var(--accent-red);
+    }
+    
+    /* Patterns Grid */
+    .patterns-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+    
+    .pattern-card {
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    
+    .pattern-name {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    
+    .pattern-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+    
+    .pattern-stats {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+    }
+    
+    .pattern-stats span {
+      color: var(--text-secondary);
+    }
+    
+    .win-rate {
+      color: var(--accent-green) !important;
+      font-weight: 600;
+    }
+    
+    /* Compression Meter */
+    .meter {
+      height: 24px;
+      background: var(--bg-tertiary);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    
+    .meter-fill {
+      height: 100%;
+      border-radius: 12px;
+      transition: width 0.5s ease;
+    }
+    
+    .meter-fill.low { background: var(--accent-green); }
+    .meter-fill.medium { background: var(--accent-yellow); }
+    .meter-fill.high { background: var(--accent-red); }
+    
+    .meter-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+    
+    /* Loading */
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-secondary);
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    .pulse { animation: pulse 2s infinite; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1><span>🔬</span> Spike Analyzer</h1>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/liquidity">Liquidity</a>
+      <a href="/trades">Trades</a>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Current Signal -->
+    <div class="card">
+      <div class="card-title">📡 Current Signal</div>
+      <div class="signal-box" id="signalBox">
+        <div class="signal-direction wait" id="signalDirection">WAIT</div>
+        <div class="signal-confidence" id="signalConfidence">0% confidence</div>
+        <div class="signal-pattern" id="signalPattern" style="display: none;">-</div>
+        <div class="signal-reasoning" id="signalReasoning">Analyzing market conditions...</div>
+      </div>
+    </div>
+
+    <!-- Current Behavior -->
+    <div class="card">
+      <div class="card-title">📊 Pre-Spike Behavior (30s window)</div>
+      <div class="stat-grid">
+        <div class="stat-item">
+          <div class="stat-value" id="compression">0%</div>
+          <div class="stat-label">Compression</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="volatility">0%</div>
+          <div class="stat-label">Volatility</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="momentum">0</div>
+          <div class="stat-label">Momentum</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="liqImbalance">0%</div>
+          <div class="stat-label">Liquidity Δ</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="priceRange">0%</div>
+          <div class="stat-label">Price Range</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="tickCount">0</div>
+          <div class="stat-label">Ticks (5m)</div>
+        </div>
+      </div>
+      
+      <!-- Compression Meter -->
+      <div style="margin-top: 20px;">
+        <div class="card-title">🎯 Compression Level</div>
+        <div class="meter">
+          <div class="meter-fill low" id="compressionMeter" style="width: 0%"></div>
+        </div>
+        <div class="meter-label">
+          <span>Relaxed</span>
+          <span>Compressed</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Price Chart -->
+    <div class="card full-width">
+      <div class="card-title">📈 Price History (5 minutes)</div>
+      <div class="chart-container">
+        <canvas id="priceChart"></canvas>
+        <div class="chart-overlay">
+          <div class="chart-stat" id="chartPrice">
+            <span class="value">$0</span>
+          </div>
+          <div class="chart-stat" id="chartChange">
+            <span class="value">0%</span>
+          </div>
+          <div class="chart-stat">
+            <span>H: <span class="value" id="chartHigh">$0</span></span>
+          </div>
+          <div class="chart-stat">
+            <span>L: <span class="value" id="chartLow">$0</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Spikes -->
+    <div class="card">
+      <div class="card-title">🚀 Recent Spikes</div>
+      <table class="spikes-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Direction</th>
+            <th>Magnitude</th>
+            <th>Recovery</th>
+          </tr>
+        </thead>
+        <tbody id="spikesTable">
+          <tr>
+            <td colspan="4" class="loading">No spikes detected yet</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Patterns -->
+    <div class="card">
+      <div class="card-title">🔍 Detected Patterns</div>
+      <div class="patterns-grid" id="patternsGrid">
+        <div class="loading">Loading patterns...</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    let priceChart = null;
+    let chartData = {
+      labels: [],
+      prices: []
+    };
+
+    // Initialize chart
+    function initChart() {
+      const ctx = document.getElementById('priceChart').getContext('2d');
+      priceChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: chartData.labels,
+          datasets: [{
+            data: chartData.prices,
+            borderColor: '#58a6ff',
+            backgroundColor: 'rgba(88, 166, 255, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.1,
+            pointRadius: 0,
+            pointHoverRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              mode: 'index',
+              intersect: false,
+              backgroundColor: '#21262d',
+              titleColor: '#f0f6fc',
+              bodyColor: '#f0f6fc',
+              borderColor: '#30363d',
+              borderWidth: 1
+            }
+          },
+          scales: {
+            x: {
+              display: false
+            },
+            y: {
+              display: true,
+              position: 'right',
+              grid: {
+                color: '#21262d'
+              },
+              ticks: {
+                color: '#8b949e',
+                callback: (v) => '$' + v.toLocaleString()
+              }
+            }
+          },
+          interaction: {
+            mode: 'nearest',
+            axis: 'x',
+            intersect: false
+          }
+        }
+      });
+    }
+
+    // Update signal display
+    function updateSignal(data) {
+      const { signal, recommendation } = data;
+      
+      const dirEl = document.getElementById('signalDirection');
+      const confEl = document.getElementById('signalConfidence');
+      const patternEl = document.getElementById('signalPattern');
+      const reasonEl = document.getElementById('signalReasoning');
+      
+      if (recommendation && recommendation.action !== 'WAIT' && recommendation.confidence > 50) {
+        dirEl.textContent = recommendation.action;
+        dirEl.className = 'signal-direction ' + recommendation.action.toLowerCase();
+        confEl.textContent = recommendation.confidence.toFixed(0) + '% confidence';
+        reasonEl.textContent = recommendation.reasoning;
+        
+        if (recommendation.pattern) {
+          patternEl.textContent = '📋 ' + recommendation.pattern;
+          patternEl.style.display = 'inline-block';
+        } else {
+          patternEl.style.display = 'none';
+        }
+      } else {
+        dirEl.textContent = 'WAIT';
+        dirEl.className = 'signal-direction wait';
+        confEl.textContent = 'No clear signal';
+        reasonEl.textContent = 'Analyzing market conditions...';
+        patternEl.style.display = 'none';
+      }
+    }
+
+    // Update behavior stats
+    function updateBehavior(behavior) {
+      if (!behavior) return;
+      
+      document.getElementById('compression').textContent = behavior.compressionLevel.toFixed(0) + '%';
+      document.getElementById('volatility').textContent = behavior.volatility.toFixed(3) + '%';
+      document.getElementById('momentum').textContent = behavior.momentum.toFixed(2);
+      document.getElementById('liqImbalance').textContent = (behavior.liquidityImbalance * 100).toFixed(1) + '%';
+      document.getElementById('priceRange').textContent = behavior.priceRange.toFixed(4) + '%';
+      
+      // Update compression meter
+      const meter = document.getElementById('compressionMeter');
+      meter.style.width = behavior.compressionLevel + '%';
+      meter.className = 'meter-fill ' + (
+        behavior.compressionLevel > 70 ? 'high' :
+        behavior.compressionLevel > 40 ? 'medium' : 'low'
+      );
+    }
+
+    // Update price chart
+    function updateChart(ticks, priceWindow) {
+      if (!ticks || ticks.length === 0) return;
+      
+      chartData.labels = ticks.map(t => new Date(t.timestamp).toLocaleTimeString());
+      chartData.prices = ticks.map(t => t.price);
+      
+      if (priceChart) {
+        priceChart.data.labels = chartData.labels;
+        priceChart.data.datasets[0].data = chartData.prices;
+        priceChart.update('none');
+      }
+      
+      // Update chart overlay
+      const lastPrice = ticks[ticks.length - 1].price;
+      const firstPrice = ticks[0].price;
+      const change = ((lastPrice - firstPrice) / firstPrice) * 100;
+      
+      document.getElementById('chartPrice').innerHTML = '<span class="value">$' + lastPrice.toLocaleString() + '</span>';
+      
+      const changeEl = document.getElementById('chartChange');
+      changeEl.innerHTML = '<span class="value">' + (change >= 0 ? '+' : '') + change.toFixed(3) + '%</span>';
+      changeEl.className = 'chart-stat ' + (change >= 0 ? 'up' : 'down');
+      
+      if (priceWindow) {
+        document.getElementById('chartHigh').textContent = '$' + priceWindow.high.toLocaleString();
+        document.getElementById('chartLow').textContent = '$' + priceWindow.low.toLocaleString();
+        document.getElementById('tickCount').textContent = priceWindow.tickCount;
+      }
+    }
+
+    // Update spikes table
+    function updateSpikes(spikes) {
+      const tbody = document.getElementById('spikesTable');
+      
+      if (!spikes || spikes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="loading">No spikes detected yet</td></tr>';
+        return;
+      }
+      
+      tbody.innerHTML = spikes.slice(-10).reverse().map(spike => `
+        <tr>
+          <td>${new Date(spike.timestamp).toLocaleTimeString()}</td>
+          <td><span class="direction-badge ${spike.direction.toLowerCase()}">${spike.direction}</span></td>
+          <td>${spike.magnitude.toFixed(3)}%</td>
+          <td>${spike.recovered ? '✅' : '❌'}</td>
+        </tr>
+      `).join('');
+    }
+
+    // Update patterns
+    function updatePatterns(patterns) {
+      const grid = document.getElementById('patternsGrid');
+      
+      if (!patterns || patterns.length === 0) {
+        grid.innerHTML = '<div class="loading">No patterns yet</div>';
+        return;
+      }
+      
+      grid.innerHTML = patterns.map(p => `
+        <div class="pattern-card">
+          <div class="pattern-name">${p.name}</div>
+          <div class="pattern-desc">${p.description}</div>
+          <div class="pattern-stats">
+            <span>Occurrences: ${p.occurrences}</span>
+            <span class="win-rate">WR: ${p.winRate.toFixed(0)}%</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Fetch all data
+    async function fetchData() {
+      try {
+        // Fetch analysis data
+        const analysisRes = await fetch('/api/spike/analysis');
+        const analysis = await analysisRes.json();
+        
+        updateBehavior(analysis.currentBehavior);
+        updateSpikes(analysis.recentSpikes);
+        updatePatterns(analysis.patterns);
+        updateChart(analysis.priceWindow?.ticks || [], analysis.priceWindow);
+        
+        // Fetch signal
+        const signalRes = await fetch('/api/spike/signal');
+        const signalData = await signalRes.json();
+        updateSignal(signalData);
+        
+      } catch (error) {
+        console.error('Failed to fetch data:', error);
+      }
+    }
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      initChart();
+      fetchData();
+      
+      // Refresh every 2 seconds
+      setInterval(fetchData, 2000);
+    });
+  </script>
+</body>
+</html>

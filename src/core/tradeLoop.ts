@@ -12,6 +12,9 @@ import path from 'path';
 import dbService from '../database/dbService';
 import { orderBookAnalyzer } from '../services/orderBookAnalyzer';
 import { generateOrderBookSignal } from '../strategies/orderBookStrategy';
+import { liquidityHunterStrategy } from '../strategies/liquidityHunterStrategy';
+import { liquidityTracker } from '../services/liquidityTracker';
+import { multiSymbolTracker } from '../services/multiSymbolLiquidityTracker';
 import { 
   applyMasterFilter, 
   checkSignalAlignment, 
@@ -21,15 +24,48 @@ import {
 } from '../filters/tradingFilters';
 import { WebServer } from '../web/server';
 
-// Strategy mode selection
+// ============================================
+// SIGNAL STABILITY & ANTI-WHIPSAW SYSTEM
+// ============================================
+interface SignalHistoryEntry {
+  timestamp: number;
+  decision: 'BUY' | 'SELL' | 'HOLD';
+  confidence: number;
+  symbol: string;
+}
+
+interface PositionReversalTracker {
+  lastReversalTime: number;
+  reversalCount: number;  // Count in last hour
+}
+
+// CONFIGURATION - Anti-Whipsaw (DISABILITATO per Wave Surfing)
+const SIGNAL_STABILITY_CONFIG = {
+  // Quanti segnali consecutivi nella stessa direzione servono per confermare
+  MIN_CONSECUTIVE_SIGNALS: 1,  // 🏄 Wave surfing: 1 segnale basta
+  // Finestra temporale per contare i segnali (ms)
+  SIGNAL_WINDOW_MS: 30000,  // 30 secondi
+  // Cooldown dopo un'inversione prima di permettere un'altra (ms)
+  REVERSAL_COOLDOWN_MS: 0,  // 🏄 Wave surfing: nessun cooldown
+  // Max inversioni per ora prima di fermarsi
+  MAX_REVERSALS_PER_HOUR: 999,  // 🏄 Wave surfing: illimitato
+  // Quick exit: chiudi posizione se segnale opposto per N cicli
+  QUICK_EXIT_SIGNALS: 1,  // 🏄 Wave surfing: chiudi subito al primo segnale opposto
+  // Confidence minima per quick exit
+  QUICK_EXIT_MIN_CONFIDENCE: 0.60,  // 🏄 Wave surfing: soglia bassa
+};
+
+// Strategy mode from environment variable
+// - 'WAVE_SURFING_ONLY': Pure wave surfing based on liquidityTracker + spikeAnalyzer (RECOMMENDED)
 // - 'ORDER_BOOK_ONLY': Pure algorithmic (no AI)
 // - 'AI_ONLY': Pure AI decisions
 // - 'HYBRID': Order book signal + AI confirmation
-const STRATEGY_MODE: 'ORDER_BOOK_ONLY' | 'AI_ONLY' | 'HYBRID' = 'ORDER_BOOK_ONLY';
+type StrategyMode = 'WAVE_SURFING_ONLY' | 'ORDER_BOOK_ONLY' | 'AI_ONLY' | 'HYBRID';
+const STRATEGY_MODE: StrategyMode = (process.env.STRATEGY_MODE as StrategyMode) || 'WAVE_SURFING_ONLY';
 
 // CONTRARIAN MODE: Invert all signals (BUY becomes SELL, SELL becomes BUY)
 // Enable this if the bot consistently loses - it means the signals are correct but inverted
-const CONTRARIAN_MODE = false;
+const CONTRARIAN_MODE = process.env.CONTRARIAN_MODE === 'true';
 
 /**
  * Invert a trading decision
@@ -49,6 +85,133 @@ class TradeLoop {
   private dailyTradeCount = 0;
   private dailyPnL = 0;
   private lastResetDate = new Date().toDateString();
+  
+  // ============================================
+  // SIGNAL STABILITY TRACKING
+  // ============================================
+  private signalHistory: Map<string, SignalHistoryEntry[]> = new Map();
+  private reversalTrackers: Map<string, PositionReversalTracker> = new Map();
+
+  /**
+   * Records a signal for stability tracking
+   */
+  private recordSignal(symbol: string, decision: 'BUY' | 'SELL' | 'HOLD', confidence: number): void {
+    const now = Date.now();
+    const entry: SignalHistoryEntry = { timestamp: now, decision, confidence, symbol };
+    
+    if (!this.signalHistory.has(symbol)) {
+      this.signalHistory.set(symbol, []);
+    }
+    
+    const history = this.signalHistory.get(symbol)!;
+    history.push(entry);
+    
+    // Keep only signals within the window
+    const cutoff = now - SIGNAL_STABILITY_CONFIG.SIGNAL_WINDOW_MS;
+    this.signalHistory.set(symbol, history.filter(h => h.timestamp > cutoff));
+  }
+
+  /**
+   * Checks if a signal is stable (consistent direction)
+   */
+  private isSignalStable(symbol: string, decision: 'BUY' | 'SELL'): boolean {
+    const history = this.signalHistory.get(symbol) || [];
+    
+    if (history.length < SIGNAL_STABILITY_CONFIG.MIN_CONSECUTIVE_SIGNALS) {
+      return false;
+    }
+    
+    // Check last N signals are in the same direction
+    const recentSignals = history.slice(-SIGNAL_STABILITY_CONFIG.MIN_CONSECUTIVE_SIGNALS);
+    const allSameDirection = recentSignals.every(s => s.decision === decision);
+    
+    return allSameDirection;
+  }
+
+  /**
+   * Checks if we should quick-exit a position due to opposing signals
+   */
+  private shouldQuickExit(symbol: string, currentPosition: { side: string }): { shouldExit: boolean; reason: string } {
+    const history = this.signalHistory.get(symbol) || [];
+    
+    if (history.length < SIGNAL_STABILITY_CONFIG.QUICK_EXIT_SIGNALS) {
+      return { shouldExit: false, reason: '' };
+    }
+    
+    const recentSignals = history.slice(-SIGNAL_STABILITY_CONFIG.QUICK_EXIT_SIGNALS);
+    const positionSide = currentPosition.side === 'buy' ? 'BUY' : 'SELL';
+    const oppositeSignal = positionSide === 'BUY' ? 'SELL' : 'BUY';
+    
+    // Check if all recent signals are opposite AND have good confidence
+    const allOpposite = recentSignals.every(s => 
+      s.decision === oppositeSignal && 
+      s.confidence >= SIGNAL_STABILITY_CONFIG.QUICK_EXIT_MIN_CONFIDENCE
+    );
+    
+    if (allOpposite) {
+      const avgConfidence = recentSignals.reduce((sum, s) => sum + s.confidence, 0) / recentSignals.length;
+      return {
+        shouldExit: true,
+        reason: `🚨 QUICK EXIT: ${SIGNAL_STABILITY_CONFIG.QUICK_EXIT_SIGNALS} consecutive ${oppositeSignal} signals (avg conf: ${(avgConfidence * 100).toFixed(0)}%)`
+      };
+    }
+    
+    return { shouldExit: false, reason: '' };
+  }
+
+  /**
+   * Checks if reversal is allowed (cooldown check)
+   */
+  private isReversalAllowed(symbol: string): { allowed: boolean; reason: string } {
+    const tracker = this.reversalTrackers.get(symbol);
+    const now = Date.now();
+    
+    if (!tracker) {
+      return { allowed: true, reason: '' };
+    }
+    
+    // Check cooldown
+    const timeSinceLastReversal = now - tracker.lastReversalTime;
+    if (timeSinceLastReversal < SIGNAL_STABILITY_CONFIG.REVERSAL_COOLDOWN_MS) {
+      const remainingCooldown = Math.ceil((SIGNAL_STABILITY_CONFIG.REVERSAL_COOLDOWN_MS - timeSinceLastReversal) / 1000);
+      return {
+        allowed: false,
+        reason: `⏳ Reversal cooldown: ${remainingCooldown}s remaining`
+      };
+    }
+    
+    // Check max reversals per hour
+    if (tracker.reversalCount >= SIGNAL_STABILITY_CONFIG.MAX_REVERSALS_PER_HOUR) {
+      return {
+        allowed: false,
+        reason: `🛑 Max reversals reached (${tracker.reversalCount}/${SIGNAL_STABILITY_CONFIG.MAX_REVERSALS_PER_HOUR} this hour)`
+      };
+    }
+    
+    return { allowed: true, reason: '' };
+  }
+
+  /**
+   * Records a position reversal
+   */
+  private recordReversal(symbol: string): void {
+    const now = Date.now();
+    const hourAgo = now - 3600000;
+    
+    let tracker = this.reversalTrackers.get(symbol);
+    
+    if (!tracker || tracker.lastReversalTime < hourAgo) {
+      // Reset if last reversal was more than an hour ago
+      tracker = { lastReversalTime: now, reversalCount: 1 };
+    } else {
+      tracker.lastReversalTime = now;
+      tracker.reversalCount++;
+    }
+    
+    this.reversalTrackers.set(symbol, tracker);
+    
+    logger.warn(`📊 [${symbol}] Reversal recorded (${tracker.reversalCount}/${SIGNAL_STABILITY_CONFIG.MAX_REVERSALS_PER_HOUR} this hour)`);
+  }
 
   /**
    * Starts the trading loop
@@ -310,7 +473,58 @@ class TradeLoop {
       let reasoning: string;
       let obSignal: Awaited<ReturnType<typeof generateOrderBookSignal>> | null = null;
 
-      if (STRATEGY_MODE === 'ORDER_BOOK_ONLY') {
+      if (STRATEGY_MODE === 'WAVE_SURFING_ONLY') {
+        // 🏄 WAVE SURFING STRATEGY
+        // Apri IMMEDIATAMENTE al segnale, chiudi al segnale opposto
+        logger.info('🏄 Using WAVE SURFING strategy...');
+        
+        // Usa multiSymbolTracker per il simbolo corrente
+        const antiSpoofSignal = multiSymbolTracker.getAntiSpoofingSignal(symbol);
+        
+        // Log sempre lo stato dello spoofing
+        logger.info(`🔍 [${symbol}] Spoofing Analysis`, {
+          action: antiSpoofSignal.action,
+          confidence: antiSpoofSignal.confidence,
+          askSpoof: `${antiSpoofSignal.details.askSpoofCount} alerts, ${antiSpoofSignal.details.askSpoofVolume.toFixed(2)} units`,
+          bidSpoof: `${antiSpoofSignal.details.bidSpoofCount} alerts, ${antiSpoofSignal.details.bidSpoofVolume.toFixed(2)} units`,
+          dominantRatio: `${(antiSpoofSignal.details.spoofRatio * 100).toFixed(0)}%`,
+        });
+        
+        // 🏄 WAVE SURFING: Soglie aggressive per reattività
+        // 50% confidence e 52% dominanza per entrare subito
+        const MIN_CONFIDENCE = 50;
+        const MIN_RATIO = 0.52;
+        
+        if (antiSpoofSignal.action !== 'WAIT' && 
+            antiSpoofSignal.confidence >= MIN_CONFIDENCE && 
+            antiSpoofSignal.details.spoofRatio >= MIN_RATIO) {
+          
+          decision = antiSpoofSignal.action;
+          confidence = antiSpoofSignal.confidence / 100;
+          reasoning = `🏄 [WAVE SURF] ${antiSpoofSignal.reasoning}`;
+          
+          logger.info(`🏄 [${symbol}] WAVE SURF SIGNAL`, {
+            action: antiSpoofSignal.action,
+            confidence: antiSpoofSignal.confidence,
+            spoofRatio: `${(antiSpoofSignal.details.spoofRatio * 100).toFixed(0)}%`,
+          });
+          
+        } else {
+          // Nessun segnale valido - HOLD
+          decision = 'HOLD';
+          confidence = 0;
+          reasoning = antiSpoofSignal.action === 'WAIT' 
+            ? `Spoofing insufficiente (${antiSpoofSignal.details.highConfidenceAlerts} alerts)`
+            : `Sotto soglia (conf: ${antiSpoofSignal.confidence}%, ratio: ${(antiSpoofSignal.details.spoofRatio * 100).toFixed(0)}%)`;
+        }
+
+        logger.info(`🏄 [${symbol}] Wave Surf Decision: ${decision}`, {
+          decision,
+          confidencePercent: `${(confidence * 100).toFixed(0)}%`,
+          reasoning: reasoning.substring(0, 150),
+        });
+
+      } else if (STRATEGY_MODE === 'ORDER_BOOK_ONLY') {
         // ORDER BOOK PURE STRATEGY
         logger.info('📊 Using ORDER BOOK ONLY strategy...');
         obSignal = await generateOrderBookSignal(symbol);
@@ -365,6 +579,52 @@ class TradeLoop {
           confidence = Math.min(0.95, confidence * trendBonus);
           reasoning = `[TREND-ALIGNED ✅] ${reasoning}`;
           logger.info(`✅ TREND-ALIGNED: ${decision} confirmed by ${emaTrend} trend`);
+        }
+
+        // 🎯 LIQUIDITY HUNTER CONFIRMATION
+        // Verifica che la direzione sia supportata dalla liquidity map
+        if (decision !== 'HOLD') {
+          const liqConfirmation = await liquidityHunterStrategy.getConfirmation(symbol, decision);
+          
+          // 🏄 WAVE SURFING - usa il liquidityTracker in tempo reale
+          const surfRec = liquidityTracker.getSurfRecommendation();
+          const waveAligned = surfRec.action === decision || surfRec.action === 'WAIT';
+          
+          logger.info(`🎯 Liquidity Hunter: ${liqConfirmation.confirmed ? 'CONFIRMS' : 'REJECTS'}`, {
+            confirmed: liqConfirmation.confirmed,
+            liquidityConfidence: `${(liqConfirmation.confidence * 100).toFixed(0)}%`,
+            reasoning: liqConfirmation.reasoning,
+          });
+          
+          logger.info(`🏄 Wave Surfing: ${surfRec.action}`, {
+            waveAligned,
+            surfConfidence: `${surfRec.confidence.toFixed(0)}%`,
+            surfReasoning: surfRec.reasoning,
+          });
+          
+          if (liqConfirmation.confirmed && waveAligned) {
+            // Doppia conferma: liquidity hunter + wave surfing
+            confidence = Math.min(0.95, confidence + liqConfirmation.confidence * 0.15 + surfRec.confidence * 0.001);
+            reasoning = `${reasoning} | 🎯 ${liqConfirmation.reasoning} | 🏄 Wave: ${surfRec.action}`;
+            logger.info(`✅ DOPPIA CONFERMA: LiquidityHunter + WaveSurfing`);
+          } else if (liqConfirmation.confirmed) {
+            // Solo liquidity hunter conferma
+            confidence = Math.min(0.95, confidence + liqConfirmation.confidence * 0.10);
+            reasoning = `${reasoning} | 🎯 ${liqConfirmation.reasoning}`;
+          } else if (waveAligned && surfRec.confidence > 50) {
+            // Solo wave surfing conferma ma forte
+            confidence = Math.min(0.95, confidence + surfRec.confidence * 0.001);
+            reasoning = `${reasoning} | 🏄 Wave: ${surfRec.action} (${surfRec.confidence.toFixed(0)}%)`;
+          } else if (liqConfirmation.confidence < 0.3 || (!waveAligned && surfRec.confidence > 60)) {
+            // Liquidity fortemente contraria O wave contraria forte - riduce confidence
+            confidence *= 0.75;
+            reasoning = `${reasoning} | ⚠️ Liquidity/Wave contrario`;
+            logger.warn(`⚠️ Liquidity/Wave contrario - confidence ridotta`, {
+              newConfidence: `${(confidence * 100).toFixed(0)}%`,
+              waveAction: surfRec.action,
+              waveConfidence: surfRec.confidence,
+            });
+          }
         }
 
         logger.info(`📊 Order Book Decision: ${decision}`, {
@@ -520,12 +780,90 @@ Remember: We need trades to make profits. Only reject clear counter-signals.
         executed: false,
       };
 
+      // ============================================
+      // SIGNAL STABILITY CHECK (Anti-Whipsaw)
+      // ============================================
+      
+      // Record this signal for stability tracking
+      this.recordSignal(symbol, decision, confidence);
+      
       // Step 7: Execute trade if confidence threshold met
       if (confidence >= effectiveThreshold) {
         if (decision === 'BUY' || decision === 'SELL') {
+          
+          // CHECK 1: Signal Stability - require consistent signals before trading
+          if (!this.isSignalStable(symbol, decision)) {
+            const history = this.signalHistory.get(symbol) || [];
+            logger.warn(`📊 [${symbol}] SIGNAL NOT STABLE YET - Waiting for ${SIGNAL_STABILITY_CONFIG.MIN_CONSECUTIVE_SIGNALS} consecutive ${decision} signals`, {
+              currentSignals: history.length,
+              recentDecisions: history.slice(-5).map(h => h.decision).join(' → '),
+            });
+            tradeDecision.executed = false;
+            tradeDecision.error = `Signal not stable (need ${SIGNAL_STABILITY_CONFIG.MIN_CONSECUTIVE_SIGNALS} consecutive ${decision})`;
+            await this.saveTradeDecision(tradeDecision);
+            return null;
+          }
+          
+          logger.info(`✅ [${symbol}] Signal stable: ${SIGNAL_STABILITY_CONFIG.MIN_CONSECUTIVE_SIGNALS}+ consecutive ${decision} signals`);
+          
           // CONTROLLO PRIORITARIO: Verifica posizioni dal database (funziona anche in DRY_RUN)
           const allActivePositions = await dbService.getActiveTrades();
           const existingDbPosition = allActivePositions.find(t => t.symbol === symbol);
+          
+          // ============================================
+          // QUICK EXIT CHECK - Close position on confirmed reversal signal
+          // ============================================
+          if (existingDbPosition) {
+            const quickExitCheck = this.shouldQuickExit(symbol, existingDbPosition);
+            if (quickExitCheck.shouldExit) {
+              logger.warn(`${quickExitCheck.reason}`, { symbol });
+              
+              // Close position immediately without opening new one
+              try {
+                const exitPrice = marketSnapshot.currentPrice;
+                const entryPrice = parseFloat(existingDbPosition.entry_price);
+                const quantity = parseFloat(existingDbPosition.quantity);
+                const positionSide = existingDbPosition.side;
+                
+                let pnl = 0;
+                if (positionSide === 'buy') {
+                  pnl = (exitPrice - entryPrice) * quantity;
+                } else {
+                  pnl = (entryPrice - exitPrice) * quantity;
+                }
+                
+                await dbService.updateTrade(existingDbPosition.trade_id, exitPrice, pnl, 'closed');
+                
+                // Calculate fees
+                const entryFee = quantity * entryPrice * 0.00035;
+                const exitFee = quantity * exitPrice * 0.00035;
+                const totalFees = entryFee + exitFee;
+                
+                // Update balance with fees
+                await dbService.updateBalanceOnTradeClose(pnl, totalFees);
+
+                logger.info(`🚨 QUICK EXIT: Posizione ${positionSide.toUpperCase()} chiusa su ${symbol} - P&L: $${pnl.toFixed(2)}`);
+                
+                if (pnl > 0) recordWin(); else recordLoss();
+                
+                // Close on exchange if not DRY_RUN
+                if (!config.system.dryRun && currentPosition) {
+                  const closeSide = positionSide === 'buy' ? 'sell' : 'buy';
+                  await hyperliquidService.placeOrder(symbol, closeSide, currentPosition.size, exitPrice);
+                }
+                
+                // Record reversal but DON'T open new position - wait for next stable signal
+                this.recordReversal(symbol);
+                tradeDecision.executed = false;
+                tradeDecision.error = 'Quick exit executed - waiting for next stable signal';
+                await this.saveTradeDecision(tradeDecision);
+                return null;
+                
+              } catch (error) {
+                logger.error(`Quick exit failed for ${symbol}`, error);
+              }
+            }
+          }
           
           // ========================================
           // CRYPTO CORRELATION FILTER
@@ -576,6 +914,21 @@ Remember: We need trades to make profits. Only reject clear counter-signals.
               return null;
             }
 
+            // ============================================
+            // REVERSAL COOLDOWN CHECK (Anti-Whipsaw)
+            // ============================================
+            const reversalCheck = this.isReversalAllowed(symbol);
+            if (!reversalCheck.allowed) {
+              logger.warn(`🚫 [${symbol}] REVERSAL BLOCKED: ${reversalCheck.reason}`, {
+                from: positionSide.toUpperCase(),
+                to: signalSide.toUpperCase(),
+              });
+              tradeDecision.executed = false;
+              tradeDecision.error = reversalCheck.reason;
+              await this.saveTradeDecision(tradeDecision);
+              return null;
+            }
+
             // Se segnale opposto → CHIUDI + APRI NUOVA (inversione)
             logger.info(`[${symbol}] INVERSIONE POSIZIONE DB: ${positionSide.toUpperCase()} → ${signalSide.toUpperCase()}`);
 
@@ -607,6 +960,11 @@ Remember: We need trades to make profits. Only reject clear counter-signals.
               } else {
                 recordLoss();
               }
+              
+              // ============================================
+              // RECORD REVERSAL (Anti-Whipsaw)
+              // ============================================
+              this.recordReversal(symbol);
               
               // Se NON in DRY_RUN, chiudi anche su Hyperliquid
               if (!config.system.dryRun && currentPosition) {

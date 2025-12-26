@@ -1,6 +1,8 @@
 import { Pool } from 'pg';
 import { logger } from '../core/logger';
+import { config } from '../utils/config';
 import { TradeDecision, OrderResponse, Account } from '../types';
+import hyperliquidService from '../services/hyperliquidService';
 
 /**
  * Database service for PostgreSQL operations
@@ -503,15 +505,160 @@ class DatabaseService {
 
   /**
    * Get recent CLOSED trades (for dashboard Last Trades section)
+   * Excludes trades with pnl=0 and exit_price=entry_price (force-closed trades)
    */
   async getRecentClosedTrades(limit = 10): Promise<any[]> {
     const query = `
       SELECT * FROM trades 
       WHERE status = 'closed'
+        AND (pnl != 0 OR exit_price != entry_price)
       ORDER BY closed_at DESC 
       LIMIT $1
     `;
     const result = await this.pool.query(query, [limit]);
+    return result.rows;
+  }
+
+  /**
+   * Get all closed trades with pagination and filters
+   */
+  async getAllClosedTrades(options: {
+    limit?: number;
+    offset?: number;
+    symbol?: string;
+    startDate?: string;
+    endDate?: string;
+    sortBy?: string;
+    sortOrder?: 'ASC' | 'DESC';
+  } = {}): Promise<{ trades: any[]; total: number }> {
+    const {
+      limit = 100,
+      offset = 0,
+      symbol,
+      startDate,
+      endDate,
+      sortBy = 'closed_at',
+      sortOrder = 'DESC'
+    } = options;
+
+    let whereClause = "WHERE status = 'closed'";
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    if (symbol) {
+      whereClause += ` AND symbol = $${paramIndex}`;
+      params.push(symbol);
+      paramIndex++;
+    }
+    if (startDate) {
+      whereClause += ` AND closed_at >= $${paramIndex}`;
+      params.push(startDate);
+      paramIndex++;
+    }
+    if (endDate) {
+      whereClause += ` AND closed_at <= $${paramIndex}`;
+      params.push(endDate);
+      paramIndex++;
+    }
+
+    const allowedSortCols = ['closed_at', 'pnl', 'pnl_percentage', 'entry_price', 'exit_price', 'quantity', 'executed_at'];
+    const sortColumn = allowedSortCols.includes(sortBy) ? sortBy : 'closed_at';
+    const order = sortOrder === 'ASC' ? 'ASC' : 'DESC';
+
+    const countQuery = `SELECT COUNT(*) FROM trades ${whereClause}`;
+    const countResult = await this.pool.query(countQuery, params);
+    const total = parseInt(countResult.rows[0].count);
+
+    const query = `
+      SELECT * FROM trades 
+      ${whereClause}
+      ORDER BY ${sortColumn} ${order}
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `;
+    params.push(limit, offset);
+    const result = await this.pool.query(query, params);
+
+    return { trades: result.rows, total };
+  }
+
+  /**
+   * Get closed trades statistics
+   */
+  async getClosedTradesStats(): Promise<any> {
+    const query = `
+      SELECT 
+        COUNT(*) as total_trades,
+        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+        SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_trades,
+        SUM(CASE WHEN pnl = 0 THEN 1 ELSE 0 END) as breakeven_trades,
+        COALESCE(SUM(pnl), 0) as total_pnl,
+        COALESCE(AVG(pnl), 0) as avg_pnl,
+        COALESCE(MAX(pnl), 0) as best_trade,
+        COALESCE(MIN(pnl), 0) as worst_trade,
+        COALESCE(AVG(CASE WHEN pnl > 0 THEN pnl END), 0) as avg_win,
+        COALESCE(AVG(CASE WHEN pnl < 0 THEN pnl END), 0) as avg_loss,
+        COALESCE(SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END), 0) as gross_profit,
+        COALESCE(SUM(CASE WHEN pnl < 0 THEN pnl ELSE 0 END), 0) as gross_loss,
+        COALESCE(AVG(pnl_percentage), 0) as avg_pnl_pct,
+        COALESCE(MAX(pnl_percentage), 0) as best_pnl_pct,
+        COALESCE(MIN(pnl_percentage), 0) as worst_pnl_pct,
+        COALESCE(AVG(EXTRACT(EPOCH FROM (closed_at - executed_at)) / 60), 0) as avg_duration_minutes,
+        MIN(executed_at) as first_trade,
+        MAX(closed_at) as last_trade
+      FROM trades
+      WHERE status = 'closed'
+    `;
+    const result = await this.pool.query(query);
+    const stats = result.rows[0];
+
+    // Calculate profit factor
+    const grossProfit = parseFloat(stats.gross_profit) || 0;
+    const grossLoss = Math.abs(parseFloat(stats.gross_loss) || 0);
+    stats.profit_factor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : grossProfit > 0 ? 'INF' : '0.00';
+
+    // Calculate win rate
+    const total = parseInt(stats.total_trades) || 0;
+    const wins = parseInt(stats.winning_trades) || 0;
+    stats.win_rate = total > 0 ? ((wins / total) * 100).toFixed(2) : '0.00';
+
+    return stats;
+  }
+
+  /**
+   * Get unique symbols from closed trades
+   */
+  async getClosedTradesSymbols(): Promise<string[]> {
+    const query = `
+      SELECT DISTINCT symbol FROM trades 
+      WHERE status = 'closed' 
+      ORDER BY symbol
+    `;
+    const result = await this.pool.query(query);
+    return result.rows.map(r => r.symbol);
+  }
+
+  /**
+   * Get closed trades grouped by symbol
+   */
+  async getClosedTradesBySymbol(): Promise<any[]> {
+    const query = `
+      SELECT 
+        symbol,
+        COUNT(*) as trade_count,
+        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losses,
+        COALESCE(SUM(pnl), 0) as total_pnl,
+        COALESCE(AVG(pnl), 0) as avg_pnl,
+        CASE WHEN COUNT(*) > 0 
+          THEN ROUND((SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END)::numeric / COUNT(*)::numeric) * 100, 2)
+          ELSE 0 
+        END as win_rate
+      FROM trades
+      WHERE status = 'closed'
+      GROUP BY symbol
+      ORDER BY total_pnl DESC
+    `;
+    const result = await this.pool.query(query);
     return result.rows;
   }
 
@@ -655,7 +802,7 @@ class DatabaseService {
       SELECT 
         (SELECT COUNT(*) FROM trades WHERE status = 'open') as open_trades,
         (SELECT COUNT(*) FROM trades WHERE DATE(executed_at) = CURRENT_DATE) as today_trades,
-        (SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE DATE(executed_at) = CURRENT_DATE AND status = 'closed') as today_pnl,
+        (SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE DATE(closed_at) = CURRENT_DATE AND status = 'closed') as today_pnl,
         (SELECT COUNT(*) FROM ai_decisions WHERE created_at >= NOW() - INTERVAL '1 hour') as recent_decisions,
         (SELECT balance FROM account_history ORDER BY timestamp DESC LIMIT 1) as current_balance,
         (SELECT COUNT(*) FROM trades WHERE status = 'closed') as total_closed,
@@ -669,9 +816,15 @@ class DatabaseService {
     const winningTrades = parseInt(row.winning_trades) || 0;
     const winRate = totalClosed > 0 ? (winningTrades / totalClosed) * 100 : 0;
     
+    // Get active trades with current price for live P&L
+    const activeTrades = await this.getActiveTrades();
+    
     return {
       ...row,
-      win_rate: winRate
+      win_rate: winRate,
+      winRate: winRate,
+      totalTrades: totalClosed,
+      activeTrades: activeTrades
     };
   }
 
@@ -719,6 +872,10 @@ class DatabaseService {
    * Reset all data (for testing purposes)
    */
   async resetAll(): Promise<void> {
+    if (!config.system.dryRun) {
+      logger.warn('ATTEMPTED TO RESET DATABASE IN LIVE MODE - OPERATION BLOCKED');
+      throw new Error('Cannot reset database in live mode (DRY_RUN=false)');
+    }
     try {
       await this.pool.query('TRUNCATE TABLE trades, ai_decisions, market_snapshots, account_history, performance_metrics RESTART IDENTITY CASCADE');
       logger.info('Database reset completed');
@@ -850,8 +1007,21 @@ class DatabaseService {
         return parseFloat(result.rows[0].balance) || 0;
       }
       
-      // No balance history - initialize with STARTING_BALANCE
-      const startingBalance = parseFloat(process.env.STARTING_BALANCE || '100');
+      // No balance history - try to fetch from Hyperliquid first
+      let startingBalance = parseFloat(process.env.STARTING_BALANCE || '100');
+      
+      try {
+        // Only fetch if not in dry run or if we want to sync with real account
+        // But for safety, let's try to fetch if we can
+        const account = await hyperliquidService.getAccount();
+        if (account && account.balance > 0) {
+            startingBalance = account.balance;
+            logger.info('Initialized balance from Hyperliquid', { balance: startingBalance });
+        }
+      } catch (err) {
+        logger.warn('Failed to fetch initial balance from Hyperliquid, using default', { error: err instanceof Error ? err.message : String(err) });
+      }
+
       await this.initializeBalance(startingBalance);
       return startingBalance;
     } catch (error) {
@@ -880,11 +1050,11 @@ class DatabaseService {
    * Update balance after trade close
    * This is the core function that maintains realistic balance tracking
    */
-  async updateBalanceOnTradeClose(pnl: number): Promise<number> {
+  async updateBalanceOnTradeClose(pnl: number, fee: number = 0): Promise<number> {
     try {
       // Get current balance
       const currentBalance = await this.getCurrentBalance();
-      const newBalance = currentBalance + pnl;
+      const newBalance = currentBalance + pnl - fee;
       
       // Get open positions count
       const openPosQuery = `SELECT COUNT(*) as count FROM trades WHERE status = 'open'`;
@@ -915,6 +1085,7 @@ class DatabaseService {
       logger.info('Balance updated', { 
         previousBalance: currentBalance, 
         pnl, 
+        fee,
         newBalance,
         totalPnl,
         dailyPnl 
@@ -1040,9 +1211,50 @@ class DatabaseService {
   }
 
   /**
+   * Sync balance from exchange
+   */
+  async syncBalance(balance: number): Promise<void> {
+    try {
+      // Get open positions count
+      const openPosQuery = `SELECT COUNT(*) as count FROM trades WHERE status = 'open'`;
+      const openPosResult = await this.pool.query(openPosQuery);
+      const openPositions = parseInt(openPosResult.rows[0]?.count) || 0;
+      
+      // Get total P&L (calculated from trades)
+      const totalPnlQuery = `SELECT COALESCE(SUM(pnl), 0) as total FROM trades WHERE status = 'closed'`;
+      const totalPnlResult = await this.pool.query(totalPnlQuery);
+      const totalPnl = parseFloat(totalPnlResult.rows[0]?.total) || 0;
+      
+      // Get today's P&L
+      const todayPnlQuery = `
+        SELECT COALESCE(SUM(pnl), 0) as daily 
+        FROM trades 
+        WHERE status = 'closed' AND DATE(closed_at) = CURRENT_DATE
+      `;
+      const todayPnlResult = await this.pool.query(todayPnlQuery);
+      const dailyPnl = parseFloat(todayPnlResult.rows[0]?.daily) || 0;
+      
+      // Insert new balance record
+      const insertQuery = `
+        INSERT INTO account_history (balance, available_balance, total_pnl, daily_pnl, open_positions)
+        VALUES ($1, $1, $2, $3, $4)
+      `;
+      await this.pool.query(insertQuery, [balance, totalPnl, dailyPnl, openPositions]);
+      
+      logger.info('Balance synced from exchange', { balance });
+    } catch (error) {
+      logger.error('Failed to sync balance', error);
+    }
+  }
+
+  /**
    * Reset balance to starting amount (for testing/reset)
    */
   async resetBalance(): Promise<void> {
+    if (!config.system.dryRun) {
+      logger.warn('ATTEMPTED TO RESET BALANCE IN LIVE MODE - OPERATION BLOCKED');
+      throw new Error('Cannot reset balance in live mode (DRY_RUN=false)');
+    }
     try {
       // Clear account history
       await this.pool.query('TRUNCATE TABLE account_history RESTART IDENTITY');

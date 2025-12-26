@@ -196,14 +196,21 @@ socket.on('decisions:update', (decisions) => {
     updateTimestamp();
 });
 
-// Listen for market updates
-socket.on('market:update', (data) => {
-    // Ignorato - non più usato per ridurre carico
-});
-
 // Listen for positions updates with live P&L - con throttle
 let pendingPositionsData = null;
 let positionsUpdateScheduled = false;
+
+// Track recently closed trades to prevent ghost positions (race condition fix)
+const recentlyClosedTrades = new Map(); // tradeId -> timestamp
+
+function cleanupRecentlyClosedTrades() {
+    const now = Date.now();
+    for (const [tradeId, timestamp] of recentlyClosedTrades.entries()) {
+        if (now - timestamp > 10000) { // Remove after 10 seconds
+            recentlyClosedTrades.delete(tradeId);
+        }
+    }
+}
 
 function renderPositions(data) {
     if (!isPageVisible) return; // Skip se tab non visibile
@@ -242,7 +249,12 @@ function renderPositions(data) {
         }
     }
     
-    const positions = data.trades || [];
+    // Clean up old entries from recentlyClosedTrades
+    cleanupRecentlyClosedTrades();
+    
+    // Filter out recently closed trades to prevent ghost positions
+    let positions = data.trades || [];
+    positions = positions.filter(trade => !recentlyClosedTrades.has(trade.trade_id));
     
     if (!positions || positions.length === 0) {
         tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;">Nessuna posizione aperta</td></tr>';
@@ -391,6 +403,12 @@ async function resetSystem() {
 // Listen for WebSocket events
 socket.on('trade:closed', (data) => {
     console.log('Trade closed:', data);
+    
+    // Track this trade as recently closed to prevent ghost positions
+    if (data.tradeId) {
+        recentlyClosedTrades.set(data.tradeId, Date.now());
+    }
+    
     // Reload trades list
     if (typeof loadTrades === 'function') {
         loadTrades();
@@ -400,6 +418,11 @@ socket.on('trade:closed', (data) => {
 // Listen for automatic position closures (by Position Manager)
 socket.on('position:closed', (data) => {
     console.log('🔒 Position automatically closed:', data);
+    
+    // Track this trade as recently closed to prevent ghost positions
+    if (data.tradeId) {
+        recentlyClosedTrades.set(data.tradeId, Date.now());
+    }
     
     // Reload trades list
     if (typeof loadTrades === 'function') {

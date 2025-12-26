@@ -15,11 +15,13 @@ import {
 class HyperliquidService {
   private sdk: Hyperliquid;
   private walletAddress: string;
+  private masterAddress: string;
 
   constructor() {
     // Get configuration
     const privateKey = config.hyperliquid.secret;
     this.walletAddress = process.env.HYPERLIQUID_WALLET_ADDRESS || '';
+    this.masterAddress = config.hyperliquid.walletAddress || this.walletAddress;
     
     // Determine if we're on testnet based on API URL
     const isTestnet = config.hyperliquid.apiUrl.includes('testnet');
@@ -33,6 +35,33 @@ class HyperliquidService {
     });
 
     logger.info(`Hyperliquid SDK initialized (${isTestnet ? 'TESTNET' : 'MAINNET'})`);
+    logger.info(`Agent Address: ${this.walletAddress}`);
+    logger.info(`Master Address: ${this.masterAddress}`);
+  }
+
+  private metaCache: any = null;
+  private lastMetaFetch: number = 0;
+  private readonly META_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+  private async getMeta() {
+    if (this.metaCache && Date.now() - this.lastMetaFetch < this.META_CACHE_TTL) {
+      return this.metaCache;
+    }
+    this.metaCache = await this.sdk.info.perpetuals.getMeta();
+    this.lastMetaFetch = Date.now();
+    return this.metaCache;
+  }
+
+  private async getPrecision(symbol: string): Promise<number> {
+    try {
+      const meta = await this.getMeta();
+      const baseAsset = symbol.split('-')[0];
+      const assetInfo = meta.universe.find((u: any) => u.name === baseAsset);
+      return assetInfo ? assetInfo.szDecimals : 4;
+    } catch (error) {
+      logger.warn('Failed to fetch meta for precision, defaulting to 4', { error: error instanceof Error ? error.message : String(error) });
+      return 4;
+    }
   }
 
   /**
@@ -81,6 +110,34 @@ class HyperliquidService {
   }
 
   /**
+   * DenormalizeSymbol da Hyperliquid al formato interno
+   * BTC-PERP -> BTC-USDC
+   */
+  private denormalizeSymbol(symbol: string): string {
+    const baseAsset = symbol.split('-')[0];
+    return `${baseAsset}-USDC`;
+  }
+
+  /**
+   * Sets leverage for a specific symbol
+   */
+  async setLeverage(symbol: string, leverage: number, isCross: boolean = false): Promise<any> {
+    logger.info(`Setting leverage to ${leverage}x for ${symbol} (Cross: ${isCross})`);
+
+    if (config.system.dryRun) {
+      logger.warn('DRY RUN MODE: Leverage update simulated');
+      return { status: 'ok' };
+    }
+
+    return this.retryWithBackoff(async () => {
+      const coin = this.normalizeSymbol(symbol);
+      const mode = isCross ? 'cross' : 'isolated';
+      // @ts-ignore - SDK types might be incomplete
+      return await this.sdk.exchange.updateLeverage(coin, mode, leverage);
+    });
+  }
+
+  /**
    * Fetches all available markets
    */
   async getMarkets(): Promise<Market[]> {
@@ -108,17 +165,20 @@ class HyperliquidService {
    * Fetches account information
    */
   async getAccount(): Promise<Account> {
-    logger.debug('Fetching account information');
+    const targetAddress = this.masterAddress || this.walletAddress;
+    logger.info('Fetching account information for address: ' + targetAddress);
 
     return this.retryWithBackoff(async () => {
-      const clearinghouseState = await this.sdk.info.perpetuals.getClearinghouseState(this.walletAddress);
+      const clearinghouseState = await this.sdk.info.perpetuals.getClearinghouseState(targetAddress);
 
       const marginSummary = clearinghouseState.marginSummary;
       const assetPositions = clearinghouseState.assetPositions || [];
 
+      logger.info('Raw margin summary', { marginSummary: JSON.stringify(marginSummary) });
+
       // Calcola P&L totale dalle posizioni
       const positions = assetPositions.map((pos: any) => ({
-        symbol: pos.position.coin,
+        symbol: this.denormalizeSymbol(pos.position.coin),
         side: (parseFloat(pos.position.szi) > 0 ? 'long' : 'short') as 'long' | 'short',
         size: Math.abs(parseFloat(pos.position.szi)),
         entryPrice: parseFloat(pos.position.entryPx || '0'),
@@ -171,7 +231,8 @@ class HyperliquidService {
     side: 'buy' | 'sell',
     quantity: number,
     price?: number,
-    useLimit: boolean = true
+    useLimit: boolean = true,
+    reduceOnly: boolean = false
   ): Promise<OrderResponse> {
     logger.info(`Placing ${side} ${useLimit ? 'LIMIT' : 'MARKET'} order for ${quantity} ${symbol}`, {
       symbol,
@@ -179,6 +240,7 @@ class HyperliquidService {
       quantity,
       price,
       useLimit,
+      reduceOnly
     });
 
     // Dry run mode - REALISTIC SIMULATION FOR LIMIT ORDERS
@@ -236,29 +298,70 @@ class HyperliquidService {
     return this.retryWithBackoff(async () => {
       const coin = this.normalizeSymbol(symbol);
       
-      logger.debug(`Placing order on Hyperliquid`, {
+      // Get precision and round quantity
+      const precision = await this.getPrecision(symbol);
+      const roundedQuantity = parseFloat(quantity.toFixed(precision));
+      
+      if (roundedQuantity === 0) {
+        throw new Error(`Quantity ${quantity} is too small for asset precision ${precision}`);
+      }
+
+      let limitPx = price;
+      // Use 'any' to avoid TS issues with SDK types
+      let orderType: any = { limit: { tif: 'Gtc' } };
+
+      // If no price provided or not using limit, treat as MARKET order (IOC with aggressive price)
+      if (!useLimit || !price) {
+        try {
+          const book = await this.getBestBidAsk(symbol);
+          const slippage = 0.05; // 5% slippage tolerance for market orders
+          
+          if (side === 'buy') {
+             // Buy: price must be higher than ask
+             limitPx = book.ask * (1 + slippage);
+          } else {
+             // Sell: price must be lower than bid
+             limitPx = book.bid * (1 - slippage);
+          }
+          
+          orderType = { limit: { tif: 'Ioc' } };
+          logger.info(`Market order converted to Limit IOC`, { symbol, side, limitPx, originalPrice: price });
+        } catch (err) {
+          logger.error('Failed to get orderbook for market order pricing', err);
+          throw new Error('Cannot place market order: failed to fetch current price');
+        }
+      }
+
+      // Round price to safe decimals (5 significant digits or max 6 decimals)
+      if (limitPx) {
+        // Use 5 decimals as a safe default for price to avoid floatToWire errors
+        limitPx = parseFloat(limitPx.toFixed(5));
+      }
+
+      logger.info(`Placing order on Hyperliquid`, {
         coin,
         is_buy: side === 'buy',
-        sz: quantity,
-        limit_px: price ? price.toString() : '0',
+        sz: roundedQuantity,
+        limit_px: limitPx,
+        order_type: JSON.stringify(orderType)
       });
 
       // Use the SDK's placeOrder method
       const orderResult = await this.sdk.exchange.placeOrder({
         coin, // BTC-PERP, ETH-PERP, SOL-PERP, ecc.
         is_buy: side === 'buy',
-        sz: quantity,
-        limit_px: price ? price.toString() : '0',
-        order_type: price ? { limit: { tif: 'Gtc' } } : { limit: { tif: 'Ioc' } },
-        reduce_only: false,
+        sz: roundedQuantity,
+        limit_px: limitPx ? limitPx.toString() : '0',
+        order_type: orderType,
+        reduce_only: reduceOnly,
       });
 
-      logger.debug('Order result received', { orderResult });
+      logger.info('Order result received', { orderResult: JSON.stringify(orderResult) });
 
       // Extract order info from response
       const status = orderResult?.response?.data?.statuses?.[0];
       
-      logger.debug('Order status', { status });
+      logger.info('Order status', { status: JSON.stringify(status) });
       
       if (!status || status.error) {
         const errorMsg = status?.error || 'Order failed - no status returned';
@@ -434,8 +537,8 @@ class HyperliquidService {
     // To close a short position, we buy
     const orderSide = side === 'long' ? 'sell' : 'buy';
 
-    // Use market order (Ioc limit) to close immediately
-    return this.placeOrder(symbol, orderSide, size);
+    // Use market order (Ioc limit) to close immediately, with reduceOnly=true
+    return this.placeOrder(symbol, orderSide, size, undefined, false, true);
   }
 }
 

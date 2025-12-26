@@ -26,6 +26,7 @@ export const config: Config = {
     apiKey: '', // Not needed for Hyperliquid (uses wallet signature instead)
     secret: getEnvVar('HYPERLIQUID_SECRET'),
     apiUrl: getEnvVar('HYPERLIQUID_API_URL', 'https://api.hyperliquid-testnet.xyz'),
+    walletAddress: getEnvVar('HYPERLIQUID_WALLET_ADDRESS'),
   },
   ai: {
     provider: (getEnvVar('AI_PROVIDER', 'openai') as 'openai' | 'deepseek' | 'anthropic'),

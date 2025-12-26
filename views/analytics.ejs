@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Analytics - Unified Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+            padding: 15px;
+        }
+
+        /* HEADER */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: rgba(0,0,0,0.5);
+            border: 1px solid #333;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            color: #00ff88;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .live-indicator {
+            width: 12px;
+            height: 12px;
+            background: #00ff88;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; box-shadow: 0 0 10px #00ff88; }
+            50% { opacity: 0.5; box-shadow: 0 0 5px #00ff88; }
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 15px;
+        }
+
+        .nav-links a {
+            color: #888;
+            text-decoration: none;
+            padding: 8px 15px;
+            border: 1px solid #333;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+
+        .nav-links a:hover, .nav-links a.active {
+            color: #00ff88;
+            border-color: #00ff88;
+        }
+
+        /* MAIN GRID */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 15px;
+        }
+
+        @media (max-width: 1200px) {
+            .main-grid { grid-template-columns: 1fr 1fr; }
+        }
+
+        @media (max-width: 800px) {
+            .main-grid { grid-template-columns: 1fr; }
+        }
+
+        /* CARDS */
+        .card {
+            background: rgba(20, 20, 35, 0.9);
+            border: 1px solid #333;
+            border-radius: 10px;
+            padding: 15px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #00ff88, #00aaff);
+        }
+
+        .card.warning::before {
+            background: linear-gradient(90deg, #ff8800, #ff4444);
+        }
+
+        .card.signal::before {
+            background: linear-gradient(90deg, #ff00ff, #00ffff);
+        }
+
+        .card-title {
+            font-size: 14px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-title .icon {
+            font-size: 18px;
+        }
+
+        /* SIGNAL BOX - Full width */
+        .signal-box {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+        }
+
+        @media (max-width: 1000px) {
+            .signal-box { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        .signal-card {
+            background: rgba(20, 20, 35, 0.9);
+            border: 2px solid #333;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .signal-card.active-buy {
+            border-color: #00ff88;
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.2);
+        }
+
+        .signal-card.active-sell {
+            border-color: #ff4444;
+            box-shadow: 0 0 20px rgba(255, 68, 68, 0.2);
+        }
+
+        .signal-card.active-wait {
+            border-color: #888;
+        }
+
+        .signal-name {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .signal-action {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .signal-action.buy { color: #00ff88; }
+        .signal-action.sell { color: #ff4444; }
+        .signal-action.wait, .signal-action.hold { color: #888; }
+
+        .signal-confidence {
+            font-size: 20px;
+            color: #00aaff;
+        }
+
+        .signal-detail {
+            font-size: 11px;
+            color: #666;
+            margin-top: 10px;
+            max-height: 40px;
+            overflow: hidden;
+        }
+
+        /* PRICE DISPLAY */
+        .price-display {
+            text-align: center;
+            padding: 20px;
+        }
+
+        .current-price {
+            font-size: 42px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .price-change {
+            font-size: 18px;
+            margin-top: 5px;
+        }
+
+        .price-change.up { color: #00ff88; }
+        .price-change.down { color: #ff4444; }
+
+        /* WAVE INDICATOR */
+        .wave-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            padding: 20px;
+        }
+
+        .wave-arrow {
+            font-size: 48px;
+            transition: transform 0.3s;
+        }
+
+        .wave-arrow.up { color: #00ff88; transform: rotate(-45deg); }
+        .wave-arrow.down { color: #ff4444; transform: rotate(45deg); }
+        .wave-arrow.neutral { color: #888; }
+
+        .wave-info {
+            text-align: left;
+        }
+
+        .wave-direction {
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .wave-strength {
+            color: #888;
+        }
+
+        /* SPOOFING PANEL */
+        .spoofing-meter {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .spoof-bar {
+            flex: 1;
+            height: 30px;
+            background: #1a1a2e;
+            border-radius: 5px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .spoof-bar-fill {
+            height: 100%;
+            transition: width 0.5s;
+        }
+
+        .spoof-bar-fill.bid { background: linear-gradient(90deg, #00ff88, #00aa55); }
+        .spoof-bar-fill.ask { background: linear-gradient(90deg, #ff4444, #ff8800); }
+
+        .spoof-bar-label {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 12px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 5px #000;
+        }
+
+        .spoof-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            font-size: 12px;
+        }
+
+        .spoof-stat {
+            padding: 10px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 5px;
+        }
+
+        .spoof-stat-label { color: #888; }
+        .spoof-stat-value { font-size: 16px; margin-top: 5px; }
+
+        /* SPOOFER LIST */
+        .spoofer-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .spoofer-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            border-bottom: 1px solid #222;
+            font-size: 12px;
+        }
+
+        .spoofer-id {
+            font-family: monospace;
+            color: #00aaff;
+        }
+
+        .spoofer-side {
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 10px;
+        }
+
+        .spoofer-side.BID { background: rgba(0,255,136,0.2); color: #00ff88; }
+        .spoofer-side.ASK { background: rgba(255,68,68,0.2); color: #ff4444; }
+        .spoofer-side.BOTH { background: rgba(136,136,136,0.2); color: #888; }
+
+        /* LIQUIDITY POOLS */
+        .pool-list {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .pool-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 5px;
+            font-size: 12px;
+        }
+
+        .pool-price {
+            min-width: 80px;
+            font-weight: bold;
+        }
+
+        .pool-bar {
+            flex: 1;
+            height: 20px;
+            background: #1a1a2e;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .pool-bar-fill {
+            height: 100%;
+            transition: width 0.3s;
+        }
+
+        .pool-bar-fill.bid { background: #00ff88; }
+        .pool-bar-fill.ask { background: #ff4444; }
+
+        .pool-size {
+            min-width: 60px;
+            text-align: right;
+            color: #888;
+        }
+
+        /* DECISION LOGIC PANEL */
+        .logic-panel {
+            grid-column: 1 / -1;
+        }
+
+        .logic-flow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+            padding: 20px;
+        }
+
+        .logic-step {
+            padding: 15px 20px;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid #333;
+            border-radius: 8px;
+            text-align: center;
+            min-width: 150px;
+        }
+
+        .logic-step.active {
+            border-color: #00ff88;
+            box-shadow: 0 0 15px rgba(0,255,136,0.3);
+        }
+
+        .logic-step-name {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        .logic-step-status {
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .logic-arrow {
+            color: #444;
+            font-size: 24px;
+        }
+
+        /* CRITERIA EXPLANATION */
+        .criteria-box {
+            grid-column: 1 / -1;
+            background: rgba(0,100,200,0.1);
+            border: 1px solid #0066aa;
+        }
+
+        .criteria-box::before {
+            background: linear-gradient(90deg, #0066aa, #00aaff);
+        }
+
+        .criteria-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+        }
+
+        .criteria-item {
+            padding: 15px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            border-left: 3px solid #00aaff;
+        }
+
+        .criteria-priority {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #00aaff;
+            color: #000;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .criteria-title {
+            font-size: 14px;
+            color: #fff;
+            margin-bottom: 5px;
+        }
+
+        .criteria-desc {
+            font-size: 12px;
+            color: #888;
+            line-height: 1.5;
+        }
+
+        /* CHART */
+        .chart-container {
+            height: 200px;
+            position: relative;
+        }
+
+        /* SCROLLBAR */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1a1a2e; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+
+        /* FOOTER */
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #444;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- HEADER -->
+        <div class="header">
+            <h1>
+                <div class="live-indicator"></div>
+                TRADING ANALYTICS
+            </h1>
+            <div class="nav-links">
+                <a href="/">Dashboard</a>
+                <a href="/analytics" class="active">Analytics</a>
+                <a href="/liquidity">Liquidity</a>
+                <a href="/spike">Spike</a>
+                <a href="/trades">Trades</a>
+            </div>
+        </div>
+
+        <!-- SIGNAL OVERVIEW -->
+        <div class="signal-box">
+            <div class="signal-card" id="signal-antispoofing">
+                <div class="signal-name">🎯 Anti-Spoofing</div>
+                <div class="signal-action wait" id="antispoof-action">WAIT</div>
+                <div class="signal-confidence" id="antispoof-confidence">0%</div>
+                <div class="signal-detail" id="antispoof-detail">Loading...</div>
+            </div>
+            <div class="signal-card" id="signal-wave">
+                <div class="signal-name">🏄 Wave Surfing</div>
+                <div class="signal-action wait" id="wave-action">WAIT</div>
+                <div class="signal-confidence" id="wave-confidence">0%</div>
+                <div class="signal-detail" id="wave-detail">Loading...</div>
+            </div>
+            <div class="signal-card" id="signal-spike">
+                <div class="signal-name">🔬 Spike Detector</div>
+                <div class="signal-action wait" id="spike-action">WAIT</div>
+                <div class="signal-confidence" id="spike-confidence">0%</div>
+                <div class="signal-detail" id="spike-detail">Loading...</div>
+            </div>
+            <div class="signal-card signal" id="signal-final">
+                <div class="signal-name">⚡ FINAL DECISION</div>
+                <div class="signal-action wait" id="final-action">HOLD</div>
+                <div class="signal-confidence" id="final-confidence">0%</div>
+                <div class="signal-detail" id="final-detail">Waiting for signals...</div>
+            </div>
+        </div>
+
+        <!-- DECISION LOGIC -->
+        <div class="card logic-panel">
+            <div class="card-title"><span class="icon">🧠</span> Decision Logic Flow</div>
+            <div class="logic-flow">
+                <div class="logic-step" id="step-antispoof">
+                    <div class="logic-step-name">1. Anti-Spoofing</div>
+                    <div class="logic-step-status" id="step-antispoof-status">Check</div>
+                </div>
+                <div class="logic-arrow">→</div>
+                <div class="logic-step" id="step-spike">
+                    <div class="logic-step-name">2. Spike Pattern</div>
+                    <div class="logic-step-status" id="step-spike-status">Check</div>
+                </div>
+                <div class="logic-arrow">→</div>
+                <div class="logic-step" id="step-wave">
+                    <div class="logic-step-name">3. Wave Direction</div>
+                    <div class="logic-step-status" id="step-wave-status">Check</div>
+                </div>
+                <div class="logic-arrow">→</div>
+                <div class="logic-step" id="step-pool">
+                    <div class="logic-step-name">4. Pool Proximity</div>
+                    <div class="logic-step-status" id="step-pool-status">Bonus</div>
+                </div>
+                <div class="logic-arrow">→</div>
+                <div class="logic-step active" id="step-final">
+                    <div class="logic-step-name">TRADE</div>
+                    <div class="logic-step-status" id="step-final-status">HOLD</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MAIN GRID -->
+        <div class="main-grid">
+            <!-- PRICE & WAVE -->
+            <div class="card">
+                <div class="card-title"><span class="icon">💰</span> Price & Wave</div>
+                <div class="price-display">
+                    <div class="current-price" id="current-price">$0.00</div>
+                    <div class="price-change up" id="price-change">+0.00%</div>
+                </div>
+                <div class="wave-indicator">
+                    <div class="wave-arrow neutral" id="wave-arrow">→</div>
+                    <div class="wave-info">
+                        <div class="wave-direction" id="wave-direction">NEUTRAL</div>
+                        <div class="wave-strength" id="wave-strength">Strength: 0%</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SPOOFING ANALYSIS -->
+            <div class="card warning">
+                <div class="card-title"><span class="icon">🚨</span> Spoofing Analysis</div>
+                <div class="spoofing-meter">
+                    <div class="spoof-bar">
+                        <div class="spoof-bar-fill bid" id="bid-spoof-bar" style="width: 50%"></div>
+                        <div class="spoof-bar-label">BID</div>
+                    </div>
+                    <div class="spoof-bar">
+                        <div class="spoof-bar-fill ask" id="ask-spoof-bar" style="width: 50%"></div>
+                        <div class="spoof-bar-label">ASK</div>
+                    </div>
+                </div>
+                <div class="spoof-stats">
+                    <div class="spoof-stat">
+                        <div class="spoof-stat-label">BID Spoof Volume</div>
+                        <div class="spoof-stat-value" id="bid-spoof-vol">0 BTC</div>
+                    </div>
+                    <div class="spoof-stat">
+                        <div class="spoof-stat-label">ASK Spoof Volume</div>
+                        <div class="spoof-stat-value" id="ask-spoof-vol">0 BTC</div>
+                    </div>
+                    <div class="spoof-stat">
+                        <div class="spoof-stat-label">BID Alerts</div>
+                        <div class="spoof-stat-value" id="bid-spoof-count">0</div>
+                    </div>
+                    <div class="spoof-stat">
+                        <div class="spoof-stat-label">ASK Alerts</div>
+                        <div class="spoof-stat-value" id="ask-spoof-count">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SPOOFER PROFILES -->
+            <div class="card">
+                <div class="card-title"><span class="icon">🔍</span> Known Spoofers (<span id="spoofer-count">0</span>)</div>
+                <div class="spoofer-list" id="spoofer-list">
+                    <div class="spoofer-item">Loading...</div>
+                </div>
+            </div>
+
+            <!-- BID POOLS -->
+            <div class="card">
+                <div class="card-title"><span class="icon">💚</span> BID Liquidity Pools</div>
+                <div class="pool-list" id="bid-pools">
+                    <div class="pool-item">Loading...</div>
+                </div>
+            </div>
+
+            <!-- ASK POOLS -->
+            <div class="card">
+                <div class="card-title"><span class="icon">❤️</span> ASK Liquidity Pools</div>
+                <div class="pool-list" id="ask-pools">
+                    <div class="pool-item">Loading...</div>
+                </div>
+            </div>
+
+            <!-- PRICE CHART -->
+            <div class="card">
+                <div class="card-title"><span class="icon">📈</span> Price History (5min)</div>
+                <div class="chart-container">
+                    <canvas id="priceChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- TRADING CRITERIA -->
+        <div class="card criteria-box">
+            <div class="card-title"><span class="icon">📋</span> Trading Criteria (WAVE_SURFING_ONLY Mode)</div>
+            <div class="criteria-list">
+                <div class="criteria-item">
+                    <div class="criteria-priority">PRIORITY 1</div>
+                    <div class="criteria-title">🎯 Anti-Spoofing Signal</div>
+                    <div class="criteria-desc">
+                        Se spoofing ≥60% su un lato:<br>
+                        • ASK spoof dominante → <strong>BUY</strong> (whale accumulating)<br>
+                        • BID spoof dominante → <strong>SELL</strong> (whale distributing)
+                    </div>
+                </div>
+                <div class="criteria-item">
+                    <div class="criteria-priority">PRIORITY 2</div>
+                    <div class="criteria-title">🔬 Spike Pattern Detection</div>
+                    <div class="criteria-desc">
+                        Se pattern spike ≥70% confidence:<br>
+                        • Compression Breakout, Liquidity Sweep, Momentum Acceleration<br>
+                        • Direzione basata su pattern pre-spike
+                    </div>
+                </div>
+                <div class="criteria-item">
+                    <div class="criteria-priority">PRIORITY 3</div>
+                    <div class="criteria-title">🏄 Wave + Spike Alignment</div>
+                    <div class="criteria-desc">
+                        Se Wave e Spike concordano:<br>
+                        • Confidence boost +30%<br>
+                        • Se contrastano → <strong>HOLD</strong>
+                    </div>
+                </div>
+                <div class="criteria-item">
+                    <div class="criteria-priority">BONUS</div>
+                    <div class="criteria-title">💧 Pool Proximity</div>
+                    <div class="criteria-desc">
+                        Se entry vicino a pool liquido (&lt;0.3%):<br>
+                        • Confidence boost +20%<br>
+                        • BUY near BID support / SELL near ASK resistance
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            Trading AI Agent - Real-time Analytics | Last update: <span id="last-update">-</span>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let priceChart;
+        const priceHistory = [];
+        const MAX_POINTS = 60;
+
+        // Initialize Chart
+        function initChart() {
+            const ctx = document.getElementById('priceChart').getContext('2d');
+            priceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Price',
+                        data: [],
+                        borderColor: '#00ff88',
+                        backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { display: false },
+                        y: {
+                            grid: { color: '#222' },
+                            ticks: { color: '#888', callback: v => '$' + v.toLocaleString() }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Fetch all data
+        async function fetchData() {
+            try {
+                const [antiSpoof, wave, spike, snapshot, spoofers] = await Promise.all([
+                    fetch('/api/liquidity/anti-spoofing').then(r => r.json()),
+                    fetch('/api/liquidity/surf').then(r => r.json()),
+                    fetch('/api/spike/signal').then(r => r.json()),
+                    fetch('/api/liquidity/snapshot').then(r => r.json()),
+                    fetch('/api/spoofer/active').then(r => r.json())
+                ]);
+
+                updateSignals(antiSpoof, wave, spike);
+                updateSnapshot(snapshot);
+                updateSpoofers(spoofers);
+                updateSpoofingAnalysis(antiSpoof);
+                updateDecisionFlow(antiSpoof, wave, spike);
+                
+                document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+            } catch (err) {
+                console.error('Fetch error:', err);
+            }
+        }
+
+        function updateSignals(antiSpoof, wave, spike) {
+            // Anti-Spoofing
+            const antiAction = antiSpoof.action || 'WAIT';
+            document.getElementById('antispoof-action').textContent = antiAction;
+            document.getElementById('antispoof-action').className = 'signal-action ' + antiAction.toLowerCase();
+            document.getElementById('antispoof-confidence').textContent = (antiSpoof.confidence || 0) + '%';
+            document.getElementById('antispoof-detail').textContent = antiSpoof.reasoning || '-';
+            updateSignalCard('signal-antispoofing', antiAction);
+
+            // Wave
+            const waveAction = wave.action || 'WAIT';
+            document.getElementById('wave-action').textContent = waveAction;
+            document.getElementById('wave-action').className = 'signal-action ' + waveAction.toLowerCase();
+            document.getElementById('wave-confidence').textContent = (wave.confidence || 0) + '%';
+            document.getElementById('wave-detail').textContent = wave.reasoning || '-';
+            updateSignalCard('signal-wave', waveAction);
+
+            // Spike
+            const spikeAction = spike.action || 'WAIT';
+            document.getElementById('spike-action').textContent = spikeAction;
+            document.getElementById('spike-action').className = 'signal-action ' + spikeAction.toLowerCase();
+            document.getElementById('spike-confidence').textContent = (spike.confidence || 0) + '%';
+            document.getElementById('spike-detail').textContent = spike.reasoning || (spike.pattern || '-');
+            updateSignalCard('signal-spike', spikeAction);
+
+            // Final Decision (logic simulation)
+            let finalAction = 'HOLD';
+            let finalConf = 0;
+            let finalDetail = '';
+
+            if (antiSpoof.action !== 'WAIT' && antiSpoof.confidence >= 60) {
+                finalAction = antiSpoof.action;
+                finalConf = antiSpoof.confidence;
+                finalDetail = '🎯 Anti-Spoofing priority';
+            } else if (spike.confidence >= 70 && spike.action !== 'WAIT') {
+                finalAction = spike.action;
+                finalConf = spike.confidence;
+                finalDetail = '🔬 Spike pattern priority';
+            } else if (wave.action !== 'WAIT' && wave.action === spike.action) {
+                finalAction = wave.action;
+                finalConf = Math.min(95, ((wave.confidence + spike.confidence) / 2) * 1.3);
+                finalDetail = '🏄🔬 Double confirmation';
+            } else if (wave.action !== 'WAIT') {
+                if (spike.action !== 'WAIT' && spike.action !== wave.action && spike.confidence > 40) {
+                    finalAction = 'HOLD';
+                    finalConf = 0;
+                    finalDetail = '⚠️ Conflicting signals';
+                } else {
+                    finalAction = wave.action;
+                    finalConf = wave.confidence;
+                    finalDetail = '🏄 Wave surfing';
+                }
+            }
+
+            document.getElementById('final-action').textContent = finalAction;
+            document.getElementById('final-action').className = 'signal-action ' + finalAction.toLowerCase();
+            document.getElementById('final-confidence').textContent = Math.round(finalConf) + '%';
+            document.getElementById('final-detail').textContent = finalDetail;
+            updateSignalCard('signal-final', finalAction);
+            
+            document.getElementById('step-final-status').textContent = finalAction;
+        }
+
+        function updateSignalCard(id, action) {
+            const card = document.getElementById(id);
+            card.className = 'signal-card';
+            if (action === 'BUY') card.classList.add('active-buy');
+            else if (action === 'SELL') card.classList.add('active-sell');
+            else card.classList.add('active-wait');
+        }
+
+        function updateSnapshot(snapshot) {
+            if (!snapshot || snapshot.error) return;
+
+            // Price
+            const price = snapshot.currentPrice || 0;
+            document.getElementById('current-price').textContent = '$' + price.toLocaleString(undefined, {minimumFractionDigits: 2});
+
+            // Add to chart
+            priceHistory.push({ time: new Date(), price });
+            if (priceHistory.length > MAX_POINTS) priceHistory.shift();
+            
+            priceChart.data.labels = priceHistory.map(p => p.time.toLocaleTimeString());
+            priceChart.data.datasets[0].data = priceHistory.map(p => p.price);
+            priceChart.update('none');
+
+            // Wave
+            const wave = snapshot.waveDirection || 'NEUTRAL';
+            const strength = snapshot.waveStrength || 0;
+            document.getElementById('wave-direction').textContent = wave;
+            document.getElementById('wave-strength').textContent = 'Strength: ' + strength.toFixed(0) + '%';
+            
+            const arrow = document.getElementById('wave-arrow');
+            arrow.className = 'wave-arrow ' + wave.toLowerCase();
+            arrow.textContent = wave === 'UP' ? '↗' : wave === 'DOWN' ? '↘' : '→';
+
+            // Pools
+            updatePools('bid-pools', snapshot.bidPools || [], 'bid');
+            updatePools('ask-pools', snapshot.askPools || [], 'ask');
+        }
+
+        function updatePools(containerId, pools, type) {
+            const container = document.getElementById(containerId);
+            if (pools.length === 0) {
+                container.innerHTML = '<div class="pool-item">No pools detected</div>';
+                return;
+            }
+
+            const maxSize = Math.max(...pools.map(p => p.totalSize));
+            container.innerHTML = pools.slice(0, 6).map(pool => `
+                <div class="pool-item">
+                    <div class="pool-price">$${pool.priceLevel.toLocaleString()}</div>
+                    <div class="pool-bar">
+                        <div class="pool-bar-fill ${type}" style="width: ${(pool.totalSize / maxSize * 100).toFixed(0)}%"></div>
+                    </div>
+                    <div class="pool-size">${pool.totalSize.toFixed(2)}</div>
+                </div>
+            `).join('');
+        }
+
+        function updateSpoofers(spoofers) {
+            document.getElementById('spoofer-count').textContent = spoofers.length;
+            const container = document.getElementById('spoofer-list');
+            
+            if (spoofers.length === 0) {
+                container.innerHTML = '<div class="spoofer-item">No active spoofers</div>';
+                return;
+            }
+
+            container.innerHTML = spoofers.slice(0, 10).map(s => `
+                <div class="spoofer-item">
+                    <span class="spoofer-id">${s.id.substring(0, 12)}</span>
+                    <span class="spoofer-side ${s.characteristics.sidePreference}">${s.characteristics.sidePreference}</span>
+                    <span>${s.characteristics.avgSize.toFixed(1)} BTC</span>
+                    <span>${s.totalOccurrences} alerts</span>
+                </div>
+            `).join('');
+        }
+
+        function updateSpoofingAnalysis(antiSpoof) {
+            if (!antiSpoof.details) return;
+            
+            const total = antiSpoof.details.askSpoofVolume + antiSpoof.details.bidSpoofVolume;
+            const bidPct = total > 0 ? (antiSpoof.details.bidSpoofVolume / total * 100) : 50;
+            const askPct = total > 0 ? (antiSpoof.details.askSpoofVolume / total * 100) : 50;
+
+            document.getElementById('bid-spoof-bar').style.width = bidPct + '%';
+            document.getElementById('ask-spoof-bar').style.width = askPct + '%';
+            
+            document.getElementById('bid-spoof-vol').textContent = antiSpoof.details.bidSpoofVolume.toFixed(2) + ' BTC';
+            document.getElementById('ask-spoof-vol').textContent = antiSpoof.details.askSpoofVolume.toFixed(2) + ' BTC';
+            document.getElementById('bid-spoof-count').textContent = antiSpoof.details.bidSpoofCount;
+            document.getElementById('ask-spoof-count').textContent = antiSpoof.details.askSpoofCount;
+        }
+
+        function updateDecisionFlow(antiSpoof, wave, spike) {
+            // Reset all steps
+            document.querySelectorAll('.logic-step').forEach(s => s.classList.remove('active'));
+
+            if (antiSpoof.action !== 'WAIT' && antiSpoof.confidence >= 60) {
+                document.getElementById('step-antispoof').classList.add('active');
+                document.getElementById('step-antispoof-status').textContent = antiSpoof.action;
+            } else {
+                document.getElementById('step-antispoof-status').textContent = 'Skip';
+            }
+
+            if (spike.confidence >= 70) {
+                document.getElementById('step-spike').classList.add('active');
+                document.getElementById('step-spike-status').textContent = spike.action;
+            } else {
+                document.getElementById('step-spike-status').textContent = spike.confidence + '%';
+            }
+
+            if (wave.action !== 'WAIT') {
+                document.getElementById('step-wave').classList.add('active');
+                document.getElementById('step-wave-status').textContent = wave.action;
+            } else {
+                document.getElementById('step-wave-status').textContent = 'Wait';
+            }
+
+            document.getElementById('step-final').classList.add('active');
+        }
+
+        // Socket events
+        socket.on('liquidity:snapshot', (snapshot) => {
+            updateSnapshot(snapshot);
+        });
+
+        // Initialize
+        initChart();
+        fetchData();
+        setInterval(fetchData, 2000);
+    </script>
+</body>
+</html>

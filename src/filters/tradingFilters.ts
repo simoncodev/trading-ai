@@ -270,11 +270,11 @@ let lastDailyReset: string = '';
 
 // ELITE SETTINGS: Meno trade = trade migliori
 const ELITE_CONFIG = {
-  MIN_TIME_BETWEEN_TRADES_MS: 3 * 60 * 1000,  // 3 minuti tra un trade e l'altro
-  MAX_DAILY_TRADES: 15,                         // Max 15 trade al giorno
-  COOLDOWN_AFTER_LOSS_MS: 5 * 60 * 1000,       // 5 min dopo una loss
-  COOLDOWN_AFTER_2_LOSSES_MS: 10 * 60 * 1000,  // 10 min dopo 2 losses
-  COOLDOWN_AFTER_3_LOSSES_MS: 30 * 60 * 1000,  // 30 min dopo 3+ losses
+  MIN_TIME_BETWEEN_TRADES_MS: 10 * 60 * 1000,  // 10 minuti tra un trade e l'altro
+  MAX_DAILY_TRADES: Infinity,                   // Nessun limite giornaliero
+  COOLDOWN_AFTER_LOSS_MS: 15 * 60 * 1000,      // 15 min dopo una loss
+  COOLDOWN_AFTER_2_LOSSES_MS: 30 * 60 * 1000,  // 30 min dopo 2 losses
+  COOLDOWN_AFTER_3_LOSSES_MS: 60 * 60 * 1000,  // 60 min dopo 3+ losses
 };
 
 /**

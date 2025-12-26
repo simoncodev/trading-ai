@@ -3,11 +3,13 @@ import { orderBookAnalyzer, OrderBookAnalysis } from '../services/orderBookAnaly
 import { adaptiveParams } from '../services/adaptiveParameters';
 import { marketDataService } from '../services/marketDataService';
 import { indicatorService } from './indicators';
+import { liquidityTracker } from '../services/liquidityTracker';
 
 /**
  * Order Book Trading Strategy - Pure order book based trading
  * Now with ADAPTIVE PARAMETERS based on market regime
  * + MACRO TREND FILTER to avoid counter-trend trades
+ * + LIQUIDITY WAVE SURFING for better entry timing
  */
 
 // ========================================
@@ -120,26 +122,26 @@ export interface OrderBookSignal {
 // Static config (non-adaptive)
 const STATIC_CONFIG = {
   // Wall detection - più stringente
-  WALL_DISTANCE_THRESHOLD: 0.15,     // Wall within 0.15% = molto significativo
+  WALL_DISTANCE_THRESHOLD: 0.12,     // Wall within 0.12% = molto significativo
 
   // Confidence boosts - aumentati
-  WALL_CONFIDENCE_BOOST: 0.12,       // +12% confidence if wall supports trade
-  PRESSURE_CONFIDENCE_BOOST: 0.10,   // +10% confidence if pressure aligns
-  MOMENTUM_CONFIDENCE_BOOST: 0.10,   // +10% confidence if momentum aligns
+  WALL_CONFIDENCE_BOOST: 0.10,       // +10% confidence if wall supports trade
+  PRESSURE_CONFIDENCE_BOOST: 0.08,   // +8% confidence if pressure aligns
+  MOMENTUM_CONFIDENCE_BOOST: 0.08,   // +8% confidence if momentum aligns
   
-  // CONFLUENZE MINIME RICHIESTE
-  MIN_CONFLUENCES_FOR_TRADE: 3,      // Almeno 3 segnali allineati
+  // CONFLUENZE MINIME RICHIESTE - AUMENTATE
+  MIN_CONFLUENCES_FOR_TRADE: 4,      // Almeno 4 segnali allineati (era 3)
 };
 
 // Fallback config - ELITE SCALPER SETTINGS
-// REGOLA: Solo setup A+ con alta probabilità
+// REGOLA: Solo setup A+ con altissima probabilità
 const FALLBACK_CONFIG = {
-  STRONG_IMBALANCE_THRESHOLD: 0.45,   // Aumentato: serve imbalance forte
-  WEAK_IMBALANCE_THRESHOLD: 0.30,     // Aumentato: evita segnali deboli
-  MAX_SPREAD_PERCENT: 0.08,           // Ridotto: solo mercati liquidi
-  MIN_LIQUIDITY_SCORE: 60,            // Aumentato: serve liquidità alta
-  PRESSURE_THRESHOLD: 0.65,           // Aumentato: serve pressione chiara
-  MIN_TRADE_CONFIDENCE: 0.80,         // CRITICO: Solo trade ad alta confidence
+  STRONG_IMBALANCE_THRESHOLD: 0.55,   // Aumentato: serve imbalance molto forte
+  WEAK_IMBALANCE_THRESHOLD: 0.40,     // Aumentato: evita segnali deboli
+  MAX_SPREAD_PERCENT: 0.06,           // Ridotto: solo mercati molto liquidi
+  MIN_LIQUIDITY_SCORE: 70,            // Aumentato: serve liquidità alta
+  PRESSURE_THRESHOLD: 0.70,           // Aumentato: serve pressione chiara
+  MIN_TRADE_CONFIDENCE: 0.85,         // CRITICO: Solo trade ad altissima confidence
 };
 
 
@@ -554,6 +556,61 @@ export async function generateOrderBookSignal(symbol: string): Promise<OrderBook
         confluenceDetails.push(`✅ Macro Trend: ${macroTrend.direction} (${macroTrend.strength.toFixed(0)}%)`);
         confidence += 0.05;
         reasons.push(`📈 TREND ALIGNED`);
+      }
+    }
+
+    // ========================================
+    // WAVE SURFING - LIQUIDITY TRACKER INTEGRATION
+    // Usa i dati del liquidity tracker per timing migliore
+    // ========================================
+    if (decision !== 'HOLD') {
+      try {
+        const snapshot = liquidityTracker.getCurrentSnapshot();
+        if (snapshot) {
+          // Verifica allineamento con wave direction
+          const waveAligned = 
+            (decision === 'BUY' && snapshot.waveDirection === 'UP') ||
+            (decision === 'SELL' && snapshot.waveDirection === 'DOWN');
+          
+          const waveOpposed = 
+            (decision === 'BUY' && snapshot.waveDirection === 'DOWN') ||
+            (decision === 'SELL' && snapshot.waveDirection === 'UP');
+          
+          if (waveAligned && snapshot.waveStrength > 40) {
+            confluences++;
+            confluenceDetails.push(`🏄 Wave ${snapshot.waveDirection} (${snapshot.waveStrength.toFixed(0)}%)`);
+            confidence += snapshot.waveStrength / 500; // Max +0.20 bonus
+            reasons.push(`🏄 SURFING WAVE ${snapshot.waveDirection}`);
+            
+            logger.info(`🏄 [${symbol}] Wave confirms ${decision}`, {
+              waveDirection: snapshot.waveDirection,
+              waveStrength: snapshot.waveStrength,
+            });
+          } else if (waveOpposed && snapshot.waveStrength > 60) {
+            // Wave forte in direzione opposta - riduce confidence
+            confidence *= 0.8;
+            reasons.push(`⚠️ Wave opposta (${snapshot.waveDirection})`);
+            
+            logger.warn(`⚠️ [${symbol}] Wave opposed to ${decision}`, {
+              waveDirection: snapshot.waveDirection,
+              waveStrength: snapshot.waveStrength,
+            });
+          }
+          
+          // Controlla spoofing - se ci sono alert recenti vicini al prezzo attuale, cautela
+          const recentSpoofing = snapshot.spoofingAlerts?.filter(a => 
+            Date.now() - a.timestamp < 10000 && a.confidence > 70
+          ) || [];
+          
+          if (recentSpoofing.length > 0) {
+            confidence *= 0.85;
+            reasons.push(`🚨 Spoofing alert attivo`);
+            logger.warn(`🚨 [${symbol}] Spoofing detected - reducing confidence`);
+          }
+        }
+      } catch (error) {
+        // Liquidity tracker not available, continue without it
+        logger.debug(`[${symbol}] Liquidity tracker not available`);
       }
     }
 

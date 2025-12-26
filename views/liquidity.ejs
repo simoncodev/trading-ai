@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Liquidity Hunter - Trading Bot</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: #0d1117;
+            color: #c9d1d9;
+            min-height: 100vh;
+            font-size: 13px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 15px;
+        }
+
+        /* HEADER */
+        .header {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px 20px;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            color: #58a6ff;
+            font-weight: 700;
+        }
+
+        .nav {
+            display: flex;
+            gap: 20px;
+        }
+
+        .nav a {
+            color: #8b949e;
+            text-decoration: none;
+            font-size: 13px;
+            transition: color 0.2s;
+        }
+
+        .nav a:hover, .nav a.active {
+            color: #58a6ff;
+        }
+
+        .price-display {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background: #3fb950;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .current-price {
+            font-size: 16px;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        /* TIMEFRAME */
+        .timeframe-bar {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+
+        .tf-btn {
+            padding: 6px 16px;
+            border: 1px solid #30363d;
+            background: #21262d;
+            color: #8b949e;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        .tf-btn:hover {
+            border-color: #58a6ff;
+            color: #c9d1d9;
+        }
+
+        .tf-btn.active {
+            background: #388bfd;
+            border-color: #388bfd;
+            color: #fff;
+        }
+
+        .tf-info {
+            color: #8b949e;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+
+        /* STATS ROW */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .stat-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px 15px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #8b949e;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .stat-value.green { color: #3fb950; }
+        .stat-value.red { color: #f85149; }
+        .stat-value.blue { color: #58a6ff; }
+
+        /* BALANCE BAR */
+        .balance-bar {
+            height: 8px;
+            background: #21262d;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            overflow: hidden;
+            display: flex;
+        }
+
+        .balance-bid {
+            background: linear-gradient(90deg, #238636, #3fb950);
+            transition: width 0.5s;
+        }
+
+        .balance-ask {
+            background: linear-gradient(90deg, #f85149, #da3633);
+            transition: width 0.5s;
+        }
+
+        /* MAIN GRID */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            gap: 15px;
+        }
+
+        @media (max-width: 1000px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* PANEL */
+        .panel {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            background: #21262d;
+            padding: 10px 15px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: #c9d1d9;
+        }
+
+        .panel-time {
+            font-size: 11px;
+            color: #8b949e;
+        }
+
+        .panel-body {
+            padding: 15px;
+        }
+
+        /* WAVE SIGNAL */
+        .wave-signal {
+            text-align: center;
+            padding: 20px;
+            border-bottom: 1px solid #30363d;
+        }
+
+        .wave-arrow {
+            font-size: 60px;
+            line-height: 1;
+            margin-bottom: 10px;
+        }
+
+        .wave-arrow.up { color: #3fb950; }
+        .wave-arrow.down { color: #f85149; }
+        .wave-arrow.neutral { color: #8b949e; }
+
+        .wave-label {
+            font-size: 11px;
+            color: #8b949e;
+            margin-bottom: 3px;
+        }
+
+        .wave-value {
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        /* DEPTH CHART */
+        .depth-chart {
+            position: relative;
+            min-height: 400px;
+            background: #0d1117;
+        }
+
+        .depth-center {
+            background: #161b22;
+            border-top: 2px solid #58a6ff;
+            border-bottom: 2px solid #58a6ff;
+            padding: 8px 15px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .center-price {
+            font-size: 18px;
+            font-weight: 700;
+            color: #58a6ff;
+        }
+
+        .center-label {
+            font-size: 11px;
+            color: #8b949e;
+        }
+
+        .depth-section {
+            padding: 5px 0;
+        }
+
+        .depth-level {
+            display: grid;
+            grid-template-columns: 100px 1fr 80px 50px;
+            gap: 10px;
+            padding: 6px 15px;
+            align-items: center;
+            border-bottom: 1px solid #21262d;
+        }
+
+        .depth-level:hover {
+            background: #21262d;
+        }
+
+        .depth-price {
+            font-weight: 700;
+            font-size: 12px;
+        }
+
+        .depth-price.bid { color: #3fb950; }
+        .depth-price.ask { color: #f85149; }
+
+        .depth-bar-container {
+            height: 20px;
+            background: #21262d;
+            border-radius: 3px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .depth-bar {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+
+        .depth-bar.bid {
+            background: linear-gradient(90deg, #238636, #3fb950);
+        }
+
+        .depth-bar.ask {
+            background: linear-gradient(90deg, #da3633, #f85149);
+            float: right;
+        }
+
+        .depth-size {
+            text-align: right;
+            color: #8b949e;
+            font-size: 11px;
+        }
+
+        .depth-score {
+            background: #30363d;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            text-align: center;
+            color: #c9d1d9;
+        }
+
+        .depth-level.spoofing {
+            opacity: 0.5;
+        }
+
+        .depth-level.spoofing .depth-price {
+            text-decoration: line-through;
+        }
+
+        .depth-level.spoofing .depth-bar {
+            background: repeating-linear-gradient(
+                45deg,
+                #484f58,
+                #484f58 5px,
+                #30363d 5px,
+                #30363d 10px
+            );
+        }
+
+        /* SURF SIGNAL */
+        .surf-card {
+            text-align: center;
+            padding: 20px;
+        }
+
+        .surf-action {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+
+        .surf-action.BUY { color: #3fb950; }
+        .surf-action.SELL { color: #f85149; }
+        .surf-action.WAIT { color: #8b949e; }
+
+        .surf-confidence {
+            font-size: 24px;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .surf-reasoning {
+            font-size: 11px;
+            color: #8b949e;
+            margin-top: 10px;
+            line-height: 1.4;
+        }
+
+        /* TOP POOLS */
+        .pools-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .pool-item {
+            display: grid;
+            grid-template-columns: 40px 1fr 60px 40px;
+            gap: 8px;
+            padding: 8px 12px;
+            border-bottom: 1px solid #21262d;
+            align-items: center;
+            font-size: 11px;
+        }
+
+        .pool-item:last-child {
+            border-bottom: none;
+        }
+
+        .pool-side {
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .pool-side.bid { color: #3fb950; }
+        .pool-side.ask { color: #f85149; }
+
+        .pool-price {
+            font-weight: 700;
+            color: #c9d1d9;
+        }
+
+        .pool-size {
+            color: #8b949e;
+            text-align: right;
+        }
+
+        .pool-score {
+            background: #30363d;
+            padding: 2px 6px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 10px;
+        }
+
+        /* ALERTS */
+        .alerts-list {
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .alert-item {
+            padding: 8px 12px;
+            border-left: 3px solid #f85149;
+            background: rgba(248, 81, 73, 0.1);
+            margin: 5px 10px;
+            border-radius: 0 4px 4px 0;
+            font-size: 11px;
+        }
+
+        .alert-time {
+            color: #8b949e;
+            font-size: 10px;
+        }
+
+        .alert-msg {
+            color: #f85149;
+        }
+
+        .no-data {
+            text-align: center;
+            color: #8b949e;
+            padding: 20px;
+            font-size: 12px;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #21262d;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #484f58;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- HEADER -->
+        <div class="header">
+            <h1>🏄 LIQUIDITY HUNTER</h1>
+            <div class="nav">
+                <a href="/">Dashboard</a>
+                <a href="/trades">Trades</a>
+                <a href="/performance">Performance</a>
+                <a href="/liquidity" class="active">Liquidity</a>
+                <a href="/backtest">Backtest</a>
+            </div>
+            <div class="price-display">
+                <div class="live-dot"></div>
+                <span class="current-price" id="currentPrice">$0.00</span>
+            </div>
+        </div>
+
+        <!-- TIMEFRAME -->
+        <div class="timeframe-bar">
+            <button class="tf-btn" data-tf="scalping">SCALP</button>
+            <button class="tf-btn" data-tf="short">SHORT</button>
+            <button class="tf-btn active" data-tf="medium">MEDIUM</button>
+            <button class="tf-btn" data-tf="swing">SWING</button>
+            <span class="tf-info" id="timeframeInfo">±1.5% | 150 levels</span>
+        </div>
+
+        <!-- STATS -->
+        <div class="stats-row">
+            <div class="stat-card">
+                <div class="stat-label">Bid Liquidity</div>
+                <div class="stat-value green" id="bidLiquidity">0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Ask Liquidity</div>
+                <div class="stat-value red" id="askLiquidity">0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Delta</div>
+                <div class="stat-value blue" id="liquidityDelta">0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Spoofing</div>
+                <div class="stat-value red" id="spoofingCount">0</div>
+            </div>
+        </div>
+
+        <!-- BALANCE BAR -->
+        <div class="balance-bar">
+            <div class="balance-bid" id="bidBar" style="width: 50%;"></div>
+            <div class="balance-ask" id="askBar" style="width: 50%;"></div>
+        </div>
+
+        <!-- MAIN -->
+        <div class="main-grid">
+            <!-- DEPTH CHART -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">📊 Depth Map</span>
+                    <span class="panel-time" id="lastUpdate">--:--:--</span>
+                </div>
+                <div class="panel-body" style="padding: 0;">
+                    <!-- WAVE -->
+                    <div class="wave-signal">
+                        <div class="wave-arrow neutral" id="waveArrow">↔</div>
+                        <div style="display: flex; justify-content: center; gap: 30px;">
+                            <div>
+                                <div class="wave-label">STRENGTH</div>
+                                <div class="wave-value" id="waveStrength">0%</div>
+                            </div>
+                            <div>
+                                <div class="wave-label">MOMENTUM</div>
+                                <div class="wave-value" id="waveMomentum">0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- DEPTH -->
+                    <div class="depth-chart">
+                        <!-- ASK LEVELS (sopra il prezzo) -->
+                        <div class="depth-section" id="depthAsks"></div>
+                        
+                        <!-- PREZZO CORRENTE -->
+                        <div class="depth-center">
+                            <span class="center-label">CURRENT PRICE</span>
+                            <span class="center-price" id="centerPrice">$0.00</span>
+                        </div>
+                        
+                        <!-- BID LEVELS (sotto il prezzo) -->
+                        <div class="depth-section" id="depthBids"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT SIDEBAR -->
+            <div>
+                <!-- SURF SIGNAL -->
+                <div class="panel" style="margin-bottom: 15px;">
+                    <div class="panel-header">
+                        <span class="panel-title">🏄 Surf Signal</span>
+                    </div>
+                    <div class="surf-card">
+                        <div class="surf-action WAIT" id="surfAction">WAIT</div>
+                        <div class="surf-confidence" id="surfConfidence">0%</div>
+                        <div class="surf-reasoning" id="surfReasoning">Analyzing...</div>
+                    </div>
+                </div>
+
+                <!-- TOP POOLS -->
+                <div class="panel" style="margin-bottom: 15px;">
+                    <div class="panel-header">
+                        <span class="panel-title">🎯 Top Pools</span>
+                    </div>
+                    <div class="pools-list" id="poolList">
+                        <div class="no-data">No pools detected</div>
+                    </div>
+                </div>
+
+                <!-- SPOOFING ALERTS -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">⚠️ Spoofing Alerts</span>
+                    </div>
+                    <div class="alerts-list" id="alertList">
+                        <div class="no-data">No alerts</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        // Elements
+        const currentPriceEl = document.getElementById('currentPrice');
+        const bidLiquidityEl = document.getElementById('bidLiquidity');
+        const askLiquidityEl = document.getElementById('askLiquidity');
+        const liquidityDeltaEl = document.getElementById('liquidityDelta');
+        const spoofingCountEl = document.getElementById('spoofingCount');
+        const bidBarEl = document.getElementById('bidBar');
+        const askBarEl = document.getElementById('askBar');
+        const waveArrowEl = document.getElementById('waveArrow');
+        const waveStrengthEl = document.getElementById('waveStrength');
+        const waveMomentumEl = document.getElementById('waveMomentum');
+        const depthAsksEl = document.getElementById('depthAsks');
+        const depthBidsEl = document.getElementById('depthBids');
+        const centerPriceEl = document.getElementById('centerPrice');
+        const lastUpdateEl = document.getElementById('lastUpdate');
+        const surfActionEl = document.getElementById('surfAction');
+        const surfConfidenceEl = document.getElementById('surfConfidence');
+        const surfReasoningEl = document.getElementById('surfReasoning');
+        const poolListEl = document.getElementById('poolList');
+        const alertListEl = document.getElementById('alertList');
+        const timeframeInfoEl = document.getElementById('timeframeInfo');
+
+        // Process snapshot
+        function handleSnapshot(data) {
+            if (!data || !data.currentPrice) return;
+
+            const price = data.currentPrice;
+
+            // Update price
+            currentPriceEl.textContent = `$${price.toFixed(2)}`;
+            centerPriceEl.textContent = `$${price.toFixed(2)}`;
+            lastUpdateEl.textContent = new Date(data.timestamp).toLocaleTimeString();
+
+            // Update stats
+            bidLiquidityEl.textContent = data.totalBidLiquidity.toFixed(2);
+            askLiquidityEl.textContent = data.totalAskLiquidity.toFixed(2);
+
+            const delta = data.liquidityDelta;
+            liquidityDeltaEl.textContent = (delta >= 0 ? '+' : '') + delta.toFixed(2);
+            liquidityDeltaEl.className = 'stat-value ' + (delta >= 0 ? 'green' : 'red');
+
+            // Balance bar
+            const total = data.totalBidLiquidity + data.totalAskLiquidity;
+            if (total > 0) {
+                const bidPct = (data.totalBidLiquidity / total * 100);
+                bidBarEl.style.width = bidPct + '%';
+                askBarEl.style.width = (100 - bidPct) + '%';
+            }
+
+            // Wave indicator
+            updateWave(data.waveDirection, data.waveStrength, data.waveMomentum);
+
+            // Depth chart
+            updateDepthChart(data.bidPools, data.askPools, price);
+
+            // Pools list
+            updatePoolsList(data.bidPools, data.askPools);
+
+            // Spoofing
+            if (data.spoofingAlerts) {
+                spoofingCountEl.textContent = data.spoofingAlerts.length;
+                updateAlertsList(data.spoofingAlerts);
+            }
+        }
+
+        function updateWave(direction, strength, momentum) {
+            let arrow = '↔';
+            let className = 'neutral';
+
+            if (direction === 'UP') {
+                arrow = '↑';
+                className = 'up';
+            } else if (direction === 'DOWN') {
+                arrow = '↓';
+                className = 'down';
+            }
+
+            waveArrowEl.textContent = arrow;
+            waveArrowEl.className = 'wave-arrow ' + className;
+            waveStrengthEl.textContent = strength.toFixed(0) + '%';
+            waveMomentumEl.textContent = (momentum >= 0 ? '+' : '') + momentum.toFixed(2);
+        }
+
+        function updateDepthChart(bidPools, askPools, price) {
+            depthAsksEl.innerHTML = '';
+            depthBidsEl.innerHTML = '';
+
+            if (!bidPools.length && !askPools.length) {
+                depthAsksEl.innerHTML = '<div class="no-data">No ask levels</div>';
+                depthBidsEl.innerHTML = '<div class="no-data">No bid levels</div>';
+                return;
+            }
+
+            // Find max size for scaling
+            const allSizes = [...bidPools, ...askPools].map(p => p.totalSize);
+            const maxSize = Math.max(...allSizes, 1);
+
+            // ASK levels - dal più lontano al più vicino (price alto -> basso)
+            const sortedAsks = [...askPools].sort((a, b) => b.priceLevel - a.priceLevel);
+            sortedAsks.forEach(pool => {
+                depthAsksEl.appendChild(createDepthLevel(pool, maxSize, 'ask'));
+            });
+
+            // BID levels - dal più vicino al più lontano (price alto -> basso)
+            const sortedBids = [...bidPools].sort((a, b) => b.priceLevel - a.priceLevel);
+            sortedBids.forEach(pool => {
+                depthBidsEl.appendChild(createDepthLevel(pool, maxSize, 'bid'));
+            });
+        }
+
+        function createDepthLevel(pool, maxSize, side) {
+            const level = document.createElement('div');
+            level.className = 'depth-level' + (pool.isLikelySpoofing ? ' spoofing' : '');
+
+            const barWidth = (pool.totalSize / maxSize * 100).toFixed(1);
+
+            level.innerHTML = `
+                <div class="depth-price ${side}">$${pool.priceLevel.toFixed(2)}</div>
+                <div class="depth-bar-container">
+                    <div class="depth-bar ${side}" style="width: ${barWidth}%;"></div>
+                </div>
+                <div class="depth-size">${pool.totalSize.toFixed(3)} BTC</div>
+                <div class="depth-score">${pool.magnetScore}</div>
+            `;
+
+            return level;
+        }
+
+        function updatePoolsList(bidPools, askPools) {
+            const allPools = [...bidPools, ...askPools]
+                .sort((a, b) => b.magnetScore - a.magnetScore)
+                .slice(0, 10);
+
+            if (allPools.length === 0) {
+                poolListEl.innerHTML = '<div class="no-data">No pools detected</div>';
+                return;
+            }
+
+            poolListEl.innerHTML = allPools.map(pool => `
+                <div class="pool-item">
+                    <span class="pool-side ${pool.side.toLowerCase()}">${pool.side}</span>
+                    <span class="pool-price">$${pool.priceLevel.toFixed(2)}</span>
+                    <span class="pool-size">${pool.totalSize.toFixed(2)}</span>
+                    <span class="pool-score">${pool.magnetScore}</span>
+                </div>
+            `).join('');
+        }
+
+        function updateAlertsList(alerts) {
+            if (!alerts || alerts.length === 0) {
+                alertListEl.innerHTML = '<div class="no-data">No alerts</div>';
+                return;
+            }
+
+            alertListEl.innerHTML = alerts.slice(0, 8).map(alert => `
+                <div class="alert-item">
+                    <div class="alert-time">${new Date(alert.timestamp).toLocaleTimeString()}</div>
+                    <div class="alert-msg">${alert.side} @ $${alert.priceLevel.toFixed(2)}</div>
+                </div>
+            `).join('');
+        }
+
+        // Surf signal handler
+        socket.on('liquidity:surf', (data) => {
+            if (!data) return;
+            surfActionEl.textContent = data.action;
+            surfActionEl.className = 'surf-action ' + data.action;
+            surfConfidenceEl.textContent = data.confidence.toFixed(0) + '%';
+            surfReasoningEl.textContent = data.reasoning;
+        });
+
+        // Snapshot handler
+        socket.on('liquidity:snapshot', handleSnapshot);
+
+        // Spoofing handler
+        socket.on('liquidity:spoofing', (alerts) => {
+            if (alerts) {
+                spoofingCountEl.textContent = alerts.length;
+                updateAlertsList(alerts);
+            }
+        });
+
+        // Timeframe
+        const tfButtons = document.querySelectorAll('.tf-btn');
+
+        function updateTimeframeInfo(config) {
+            if (config) {
+                timeframeInfoEl.textContent = `±${config.maxDistancePercent}% | ${config.orderBookDepth} levels`;
+            }
+        }
+
+        tfButtons.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const tf = btn.dataset.tf;
+                tfButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                try {
+                    const res = await fetch('/api/liquidity/timeframe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ timeframe: tf })
+                    });
+                    const data = await res.json();
+                    if (data.config) updateTimeframeInfo(data.config);
+                } catch (e) {
+                    console.error(e);
+                }
+            });
+        });
+
+        socket.on('liquidity:timeframe', (data) => {
+            if (data.current) {
+                tfButtons.forEach(btn => {
+                    btn.classList.toggle('active', btn.dataset.tf === data.current);
+                });
+            }
+            if (data.config) updateTimeframeInfo(data.config);
+        });
+
+        // Initial fetch
+        async function fetchInitialData() {
+            try {
+                const [snapshotRes, tfRes, surfRes] = await Promise.all([
+                    fetch('/api/liquidity/snapshot'),
+                    fetch('/api/liquidity/timeframe'),
+                    fetch('/api/liquidity/surf')
+                ]);
+
+                const snapshot = await snapshotRes.json();
+                const tf = await tfRes.json();
+                const surf = await surfRes.json();
+
+                if (snapshot && snapshot.currentPrice) handleSnapshot(snapshot);
+                if (tf.config) updateTimeframeInfo(tf.config);
+                if (tf.current) {
+                    tfButtons.forEach(btn => {
+                        btn.classList.toggle('active', btn.dataset.tf === tf.current);
+                    });
+                }
+                if (surf && surf.action) {
+                    surfActionEl.textContent = surf.action;
+                    surfActionEl.className = 'surf-action ' + surf.action;
+                    surfConfidenceEl.textContent = surf.confidence.toFixed(0) + '%';
+                    surfReasoningEl.textContent = surf.reasoning;
+                }
+            } catch (e) {
+                console.error('Failed to fetch initial data:', e);
+            }
+        }
+
+        fetchInitialData();
+        setInterval(fetchInitialData, 2000);
+    </script>
+</body>
+
+</html>

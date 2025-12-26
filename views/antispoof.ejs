@@ -1,0 +1,1703 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --bg: #0d1117;
+            --bg-card: #161b22;
+            --bg-hover: #21262d;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --text-dim: #8b949e;
+            --green: #3fb950;
+            --green-bg: rgba(63,185,80,0.15);
+            --red: #f85149;
+            --red-bg: rgba(248,81,73,0.15);
+            --blue: #58a6ff;
+            --yellow: #d29922;
+            --purple: #a371f7;
+        }
+        
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            font-size: 13px;
+        }
+
+        /* HEADER */
+        header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--blue);
+        }
+
+        .logo-icon { font-size: 24px; }
+
+        .symbols {
+            display: flex;
+            gap: 8px;
+        }
+
+        .symbol-btn {
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-dim);
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .symbol-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text);
+        }
+
+        .symbol-btn.active {
+            background: var(--blue);
+            border-color: var(--blue);
+            color: #fff;
+        }
+
+        .header-info {
+            display: flex;
+            gap: 24px;
+            align-items: center;
+        }
+
+        .info-item { text-align: right; }
+
+        .info-label {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .info-value {
+            font-size: 15px;
+            font-weight: 700;
+        }
+
+        .info-value.green { color: var(--green); }
+        .info-value.red { color: var(--red); }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 1200px) {
+            .grid-2 { grid-template-columns: 1fr; }
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-title {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-dim);
+        }
+
+        .card-badge {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 700;
+        }
+
+        .card-badge.live {
+            background: var(--green-bg);
+            color: var(--green);
+        }
+
+        .card-body { padding: 16px; }
+
+        /* ACCOUNT STATS */
+        .account-stats {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .stat-value.green { color: var(--green); }
+        .stat-value.red { color: var(--red); }
+        .stat-value.blue { color: var(--blue); }
+
+        .stat-sub {
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-top: 4px;
+        }
+
+        @media (max-width: 900px) {
+            .account-stats { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        /* POSITION */
+        .position-wrapper { margin-bottom: 20px; }
+
+        .no-position {
+            background: var(--bg-card);
+            border: 1px dashed var(--border);
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            color: var(--text-dim);
+            transition: opacity 0.3s ease;
+        }
+
+        .no-position-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
+
+        .position-card {
+            background: var(--bg-card);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            display: grid;
+            grid-template-columns: 150px 1fr repeat(4, auto);
+            align-items: center;
+            gap: 24px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .position-card.long {
+            border-color: var(--green);
+            border-left-width: 4px;
+        }
+
+        .position-card.short {
+            border-color: var(--red);
+            border-left-width: 4px;
+        }
+
+        .pos-side {
+            font-size: 28px;
+            font-weight: 700;
+            text-align: center;
+            padding: 12px;
+            border-radius: 6px;
+            transition: all 0.3s ease;
+        }
+
+        .pos-side.long { background: var(--green-bg); color: var(--green); }
+        .pos-side.short { background: var(--red-bg); color: var(--red); }
+
+        .pos-info { display: flex; flex-direction: column; gap: 4px; }
+        .pos-symbol { font-size: 18px; font-weight: 700; }
+        .pos-prices { font-size: 12px; color: var(--text-dim); }
+
+        .pos-metric {
+            text-align: center;
+            padding: 8px 16px;
+            background: var(--bg);
+            border-radius: 6px;
+            min-width: 100px;
+        }
+
+        .pos-metric-value { font-size: 16px; font-weight: 700; }
+        .pos-metric-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; margin-top: 4px; }
+
+        .pos-pnl {
+            text-align: center;
+            padding: 12px 20px;
+            border-radius: 6px;
+            min-width: 120px;
+        }
+
+        .pos-pnl.profit { background: var(--green-bg); }
+        .pos-pnl.loss { background: var(--red-bg); }
+
+        .pos-pnl-value { font-size: 22px; font-weight: 700; }
+        .pos-pnl.profit .pos-pnl-value { color: var(--green); }
+        .pos-pnl.loss .pos-pnl-value { color: var(--red); }
+
+        .pos-pnl-pct { font-size: 13px; margin-top: 4px; }
+        .pos-pnl.profit .pos-pnl-pct { color: var(--green); }
+        .pos-pnl.loss .pos-pnl-pct { color: var(--red); }
+
+        .pos-close-btn {
+            padding: 12px 20px;
+            background: var(--red);
+            border: none;
+            border-radius: 6px;
+            color: #fff;
+            font-family: inherit;
+            font-weight: 700;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .pos-close-btn:hover { opacity: 0.8; }
+
+        /* SIGNAL */
+        .signal-section {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .signal-box {
+            background: var(--bg-card);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            padding: 24px;
+            text-align: center;
+        }
+
+        .signal-box.buy { border-color: var(--green); background: linear-gradient(135deg, rgba(63,185,80,0.1) 0%, var(--bg-card) 100%); }
+        .signal-box.sell { border-color: var(--red); background: linear-gradient(135deg, rgba(248,81,73,0.1) 0%, var(--bg-card) 100%); }
+
+        .signal-label {
+            font-size: 11px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .signal-action { font-size: 42px; font-weight: 700; margin-bottom: 8px; }
+        .signal-action.buy { color: var(--green); }
+        .signal-action.sell { color: var(--red); }
+        .signal-action.wait { color: var(--text-dim); }
+
+        .signal-confidence { font-size: 24px; font-weight: 700; color: var(--blue); }
+
+        .signal-details {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .signal-reasoning {
+            padding: 16px;
+            background: var(--bg);
+            border-radius: 6px;
+            border-left: 3px solid var(--blue);
+            margin-bottom: 16px;
+        }
+
+        .signal-reasoning-title {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .signal-reasoning-text { font-size: 13px; line-height: 1.5; }
+
+        .signal-meta {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .meta-item {
+            padding: 12px;
+            background: var(--bg);
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .meta-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px; }
+        .meta-value { font-size: 14px; font-weight: 700; }
+
+        /* SPOOFING */
+        .spoof-meter {
+            height: 40px;
+            background: var(--bg);
+            border-radius: 20px;
+            display: flex;
+            overflow: hidden;
+            margin: 16px 0;
+        }
+
+        .spoof-bar {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+            color: #000;
+            transition: width 0.5s ease;
+        }
+
+        .spoof-bar.bid { background: linear-gradient(90deg, #2ea043, var(--green)); }
+        .spoof-bar.ask { background: linear-gradient(90deg, var(--red), #da3633); }
+
+        .spoof-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-dim);
+        }
+
+        .chart-container { height: 180px; position: relative; }
+
+        /* LISTS */
+        .list { max-height: 220px; overflow-y: auto; }
+
+        .list-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+        }
+
+        .list-item:last-child { border-bottom: none; }
+        .list-empty { padding: 24px; text-align: center; color: var(--text-dim); }
+
+        .trade-side { padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+        .trade-side.buy { background: var(--green-bg); color: var(--green); }
+        .trade-side.sell { background: var(--red-bg); color: var(--red); }
+
+        .trade-pnl { font-weight: 700; margin-left: auto; }
+        .trade-pnl.profit { color: var(--green); }
+        .trade-pnl.loss { color: var(--red); }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+
+        .status-dot.active { background: var(--green); animation: blink 1s infinite; }
+        .status-dot.disconnected { background: var(--red); }
+
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        /* CONFLICT WARNING */
+        .conflict-warning {
+            background: rgba(210,153,34,0.15);
+            border: 2px solid var(--yellow);
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin-bottom: 20px;
+            display: none;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .conflict-warning.show { display: flex; }
+        .conflict-icon { font-size: 32px; }
+        .conflict-content { flex: 1; }
+        .conflict-title { font-size: 14px; font-weight: 700; color: var(--yellow); margin-bottom: 4px; }
+        .conflict-desc { font-size: 12px; color: var(--text-dim); }
+
+        .conflict-btn {
+            padding: 10px 20px;
+            background: var(--yellow);
+            border: none;
+            border-radius: 6px;
+            color: #000;
+            font-family: inherit;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        /* FLOW */
+        .flow-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .flow-step {
+            padding: 10px 16px;
+            background: var(--bg);
+            border: 2px solid var(--border);
+            border-radius: 6px;
+            text-align: center;
+            min-width: 100px;
+        }
+
+        .flow-step.pass { border-color: var(--green); background: var(--green-bg); }
+        .flow-step.fail { border-color: var(--red); background: var(--red-bg); }
+
+        .flow-num { font-size: 14px; font-weight: 700; color: var(--text-dim); }
+        .flow-step.pass .flow-num { color: var(--green); }
+        .flow-step.fail .flow-num { color: var(--red); }
+
+        .flow-name { font-size: 9px; color: var(--text-dim); text-transform: uppercase; margin-top: 2px; }
+        .flow-value { font-size: 11px; font-weight: 700; margin-top: 4px; }
+        .flow-arrow { color: var(--border); font-size: 18px; }
+
+        @media (max-width: 800px) {
+            .signal-section { grid-template-columns: 1fr; }
+            .position-card { grid-template-columns: 1fr; text-align: center; }
+            .flow-container { flex-wrap: wrap; }
+        }
+
+        /* Connection status bar */
+        .connection-bar {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 4px 24px;
+            font-size: 11px;
+            display: flex;
+            justify-content: space-between;
+            color: var(--text-dim);
+        }
+
+        .connection-bar.disconnected { background: rgba(248,81,73,0.1); }
+
+        /* Reset button */
+        .reset-btn {
+            padding: 8px 16px;
+            background: linear-gradient(135deg, #f85149 0%, #da3633 100%);
+            border: none;
+            border-radius: 6px;
+            color: #fff;
+            font-family: inherit;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .reset-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 15px rgba(248,81,73,0.4);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-overlay.show { display: flex; }
+
+        .modal-content {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 400px;
+            width: 90%;
+            text-align: center;
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--yellow);
+            margin-bottom: 16px;
+        }
+
+        .modal-body { margin-bottom: 20px; }
+        .modal-body p { color: var(--text); margin-bottom: 16px; }
+
+        .modal-options { display: flex; flex-direction: column; gap: 12px; }
+
+        .modal-option {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            padding: 16px;
+            border-radius: 8px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: left;
+        }
+
+        .modal-option:hover { border-color: var(--blue); }
+        .modal-option.danger:hover { border-color: var(--red); background: var(--red-bg); }
+        .modal-option small { color: var(--text-dim); font-size: 11px; display: block; margin-top: 4px; }
+
+        .modal-close {
+            background: transparent;
+            border: 1px solid var(--border);
+            padding: 10px 24px;
+            border-radius: 6px;
+            color: var(--text-dim);
+            font-family: inherit;
+            cursor: pointer;
+            margin-top: 12px;
+        }
+
+        .modal-close:hover { border-color: var(--text); color: var(--text); }
+    </style>
+</head>
+<body>
+    <!-- CONNECTION STATUS BAR -->
+    <div class="connection-bar" id="connection-bar">
+        <span id="connection-status">
+            <span class="status-dot active"></span>
+            WebSocket Connesso
+        </span>
+        <span id="last-update">Ultimo aggiornamento: --:--:--</span>
+    </div>
+
+    <header>
+        <div class="logo">
+            <span class="logo-icon">🎯</span>
+            <span>TRADING BOT</span>
+        </div>
+        
+        <div class="symbols">
+            <a href="?symbol=BTC-USDC" class="symbol-btn" data-symbol="BTC-USDC">₿ BTC</a>
+            <a href="?symbol=ETH-USDC" class="symbol-btn" data-symbol="ETH-USDC">Ξ ETH</a>
+            <a href="?symbol=SOL-USDC" class="symbol-btn" data-symbol="SOL-USDC">◎ SOL</a>
+            <a href="?symbol=DOGE-USDC" class="symbol-btn" data-symbol="DOGE-USDC">Ð DOGE</a>
+        </div>
+        
+        <div class="header-info">
+            <div class="info-item">
+                <div class="info-label">Prezzo</div>
+                <div class="info-value" id="price">$0.00</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Messaggi WS</div>
+                <div class="info-value" id="ws-count">0</div>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- CONFLICT WARNING -->
+        <div class="conflict-warning" id="conflict-warning">
+            <div class="conflict-icon">⚠️</div>
+            <div class="conflict-content">
+                <div class="conflict-title" id="conflict-title">Segnale Conflittuale</div>
+                <div class="conflict-desc" id="conflict-desc">Il segnale attuale è opposto alla posizione aperta.</div>
+            </div>
+            <button class="conflict-btn" onclick="closePosition()">CHIUDI POSIZIONE</button>
+        </div>
+
+        <!-- ACCOUNT STATS -->
+        <div class="account-stats">
+            <div class="stat-card">
+                <div class="stat-label">Saldo</div>
+                <div class="stat-value blue" id="balance">$0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Patrimonio</div>
+                <div class="stat-value" id="equity">$0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">P&L Non Realizzato</div>
+                <div class="stat-value" id="unrealized">$0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">P&L Oggi</div>
+                <div class="stat-value" id="today-pnl">$0.00</div>
+                <div class="stat-sub" id="today-pct">0%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Win Rate</div>
+                <div class="stat-value" id="winrate">0%</div>
+                <div class="stat-sub" id="trades-count">0 trades</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Azioni</div>
+                <button class="reset-btn" onclick="showResetModal()">🔄 RESET</button>
+            </div>
+        </div>
+
+        <!-- POSITION -->
+        <div class="position-wrapper">
+            <div class="no-position" id="no-position">
+                <div class="no-position-icon">📭</div>
+                <div>Nessuna Posizione Aperta</div>
+                <div style="font-size: 12px; margin-top: 8px;">In attesa di segnale...</div>
+            </div>
+            <div class="position-card" id="position-card" style="display: none;">
+                <div class="pos-side" id="pos-side">LONG</div>
+                <div class="pos-info">
+                    <div class="pos-symbol" id="pos-symbol">BTC-USDC</div>
+                    <div class="pos-prices" id="pos-prices">Entrata: $0 | Attuale: $0</div>
+                </div>
+                <div class="pos-metric">
+                    <div class="pos-metric-value" id="pos-size">0.000</div>
+                    <div class="pos-metric-label">Quantità</div>
+                </div>
+                <div class="pos-metric">
+                    <div class="pos-metric-value" id="pos-leverage">20x</div>
+                    <div class="pos-metric-label">Leva</div>
+                </div>
+                <div class="pos-pnl" id="pos-pnl-box">
+                    <div class="pos-pnl-value" id="pos-pnl">$0.00</div>
+                    <div class="pos-pnl-pct" id="pos-pnl-pct">0%</div>
+                </div>
+                <button class="pos-close-btn" onclick="closePosition()">CHIUDI</button>
+            </div>
+        </div>
+
+        <!-- SIGNAL SECTION -->
+        <div class="signal-section">
+            <div class="signal-box" id="signal-box">
+                <div class="signal-label">Segnale Corrente</div>
+                <div class="signal-action wait" id="signal-action">ATTESA</div>
+                <div class="signal-confidence" id="signal-conf">0%</div>
+            </div>
+            <div class="signal-details">
+                <div class="signal-reasoning">
+                    <div class="signal-reasoning-title">Analisi</div>
+                    <div class="signal-reasoning-text" id="signal-reasoning">In attesa dei dati WebSocket...</div>
+                </div>
+                <div class="signal-meta">
+                    <div class="meta-item">
+                        <div class="meta-label">Dominante</div>
+                        <div class="meta-value" id="dominant-side">-</div>
+                    </div>
+                    <div class="meta-item">
+                        <div class="meta-label">Rapporto</div>
+                        <div class="meta-value" id="spoof-ratio">0%</div>
+                    </div>
+                    <div class="meta-item">
+                        <div class="meta-label">Volume Spoof</div>
+                        <div class="meta-value" id="spoof-volume">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DECISION FLOW -->
+        <div class="flow-container">
+            <div class="flow-step" id="flow-1">
+                <div class="flow-num">1</div>
+                <div class="flow-name">Spoofing</div>
+                <div class="flow-value" id="flow-1-value">-</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step" id="flow-2">
+                <div class="flow-num">2</div>
+                <div class="flow-name">Rapporto ≥70%</div>
+                <div class="flow-value" id="flow-2-value">-</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step" id="flow-3">
+                <div class="flow-num">3</div>
+                <div class="flow-name">Confidenza ≥78%</div>
+                <div class="flow-value" id="flow-3-value">-</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step" id="flow-4">
+                <div class="flow-num">4</div>
+                <div class="flow-name">Segnale</div>
+                <div class="flow-value" id="flow-4-value">ATTESA</div>
+            </div>
+        </div>
+
+        <!-- GRID -->
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">📊 Bilancio Spoofing</div>
+                </div>
+                <div class="card-body">
+                    <div class="spoof-labels">
+                        <span>BID <span id="bid-pct">50%</span></span>
+                        <span><span id="ask-pct">50%</span> ASK</span>
+                    </div>
+                    <div class="spoof-meter">
+                        <div class="spoof-bar bid" id="bid-bar" style="width: 50%">BID</div>
+                        <div class="spoof-bar ask" id="ask-bar" style="width: 50%">ASK</div>
+                    </div>
+                    <div class="signal-meta" style="margin-top: 16px;">
+                        <div class="meta-item">
+                            <div class="meta-label">Vol BID</div>
+                            <div class="meta-value" id="bid-vol" style="color: var(--green);">0</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-label">Vol ASK</div>
+                            <div class="meta-value" id="ask-vol" style="color: var(--red);">0</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-label">Allarmi</div>
+                            <div class="meta-value" id="alerts-count">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">📈 Storico Spoofing</div>
+                    <div class="card-badge live">LIVE</div>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">📜 Ultimi Trades</div>
+                    <a href="/closed-trades" style="color: var(--blue); font-size: 12px; text-decoration: none;">Vedi tutti →</a>
+                </div>
+                <div class="card-body">
+                    <div class="list" id="trades-list">
+                        <div class="list-empty">Nessun trade</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">🚨 Allarmi Spoofing</div>
+                </div>
+                <div class="card-body">
+                    <div class="list" id="alerts-list">
+                        <div class="list-empty">Nessun allarme</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RESET MODAL -->
+    <div class="modal-overlay" id="reset-modal">
+        <div class="modal-content">
+            <div class="modal-title">⚠️ Reset</div>
+            <div class="modal-body">
+                <p>Scegli cosa vuoi resettare:</p>
+                <div class="modal-options">
+                    <button class="modal-option" onclick="resetBalance()">
+                        💰 Reset Solo Balance
+                        <small>Riporta il saldo a $100 (mantiene i dati dei trades)</small>
+                    </button>
+                    <button class="modal-option danger" onclick="resetAll()">
+                        🗑️ Reset Completo
+                        <small>Cancella tutti i trades e resetta il balance a $100</small>
+                    </button>
+                </div>
+            </div>
+            <button class="modal-close" onclick="hideResetModal()">Annulla</button>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // ===========================================
+        // STATE
+        // ===========================================
+        const params = new URLSearchParams(window.location.search);
+        const currentSymbol = params.get('symbol') || 'BTC-USDC';
+        const symbolShort = currentSymbol.split('-')[0];
+        
+        let wsMessageCount = 0;
+        let currentPosition = null;
+        let currentSignal = { action: 'WAIT', confidence: 0 };
+        let currentPrice = 0;
+        let positionClosed = false; // Flag per forzare nascondere la posizione
+        let positionClosedTimestamp = 0; // Timestamp di quando è stata chiusa
+        const POSITION_CLOSED_GRACE_PERIOD = 5000; // 5 secondi di grace period
+        
+        // Funzione per controllare se siamo ancora nel grace period
+        function isInClosedGracePeriod() {
+            if (!positionClosed) return false;
+            return (Date.now() - positionClosedTimestamp) < POSITION_CLOSED_GRACE_PERIOD;
+        }
+        
+        // Chart
+        const chartData = { labels: [], bid: [], ask: [] };
+        let chart;
+
+        // ========================================
+        // STATE MANAGEMENT (semplificato)
+        // ========================================
+        
+        // Cache per evitare aggiornamenti inutili
+        const stateCache = {
+            lastSpoofData: null
+        };
+        
+        // Throttle semplice
+        const THROTTLE_MS = 200;
+        let lastDomUpdate = {};
+        
+        function throttledUpdate(key, updateFn) {
+            const now = Date.now();
+            if (lastDomUpdate[key] && now - lastDomUpdate[key] < THROTTLE_MS) {
+                return;
+            }
+            lastDomUpdate[key] = now;
+            updateFn();
+        }
+        
+        // Aggiornamento testo ottimizzato
+        function setText(id, value) {
+            const el = document.getElementById(id);
+            if (el && el.textContent !== String(value)) {
+                el.textContent = String(value);
+            }
+        }
+        
+        function setClass(id, className) {
+            const el = document.getElementById(id);
+            if (el && el.className !== className) {
+                el.className = className;
+            }
+        }
+
+        // ===========================================
+        // WEBSOCKET CONNECTION
+        // ===========================================
+        const socket = io({
+            transports: ['websocket'],
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionAttempts: 10
+        });
+
+        // Connection events
+        socket.on('connect', () => {
+            console.log('✅ WebSocket connected:', socket.id);
+            updateConnectionStatus(true);
+        });
+
+        socket.on('disconnect', () => {
+            console.log('❌ WebSocket disconnected');
+            updateConnectionStatus(false);
+        });
+
+        socket.on('connect_error', (err) => {
+            console.error('WebSocket connection error:', err);
+            updateConnectionStatus(false);
+        });
+
+        // ===========================================
+        // WEBSOCKET EVENT HANDLERS
+        // ===========================================
+
+        // Signal updates (real-time)
+        socket.on('signal:update', (signal) => {
+            wsMessageCount++;
+            updateWSCount();
+            
+            if (signal.symbol === currentSymbol) {
+                // Aggiorna prezzo corrente
+                if (signal.price && signal.price > 0) {
+                    currentPrice = signal.price;
+                    setText('price', '$' + currentPrice.toLocaleString('it-IT', { minimumFractionDigits: 2 }));
+                    // Aggiorna P&L posizione se esiste
+                    if (currentPosition) {
+                        updateLivePositionPnl();
+                    }
+                }
+                
+                updateSignal({
+                    action: signal.action,
+                    confidence: signal.confidence,
+                    reasoning: signal.reasoning,
+                    details: signal.details || { currentPrice: signal.price }
+                });
+                updateTimestamp();
+                checkConflict();
+            }
+        });
+
+        // Multi-symbol signals (batch update)
+        socket.on('multisymbol:signals', (signals) => {
+            wsMessageCount++;
+            updateWSCount();
+            
+            if (signals && signals[currentSymbol]) {
+                const sig = signals[currentSymbol];
+                if (sig.details && sig.details.currentPrice && sig.details.currentPrice > 0) {
+                    currentPrice = sig.details.currentPrice;
+                    setText('price', '$' + currentPrice.toLocaleString('it-IT', { minimumFractionDigits: 2 }));
+                    if (currentPosition) {
+                        updateLivePositionPnl();
+                    }
+                }
+                updateSignal(sig);
+                updateTimestamp();
+            }
+        });
+
+        // Multi-symbol snapshots
+        socket.on('multisymbol:snapshots', (snapshots) => {
+            wsMessageCount++;
+            updateWSCount();
+            
+            if (snapshots && snapshots[currentSymbol]) {
+                const snap = snapshots[currentSymbol];
+                if (snap.currentPrice && snap.currentPrice > 0) {
+                    currentPrice = snap.currentPrice;
+                    setText('price', '$' + currentPrice.toLocaleString('it-IT', { minimumFractionDigits: 2 }));
+                    if (currentPosition) {
+                        updateLivePositionPnl();
+                    }
+                }
+                if (snap.spoofingAlerts) {
+                    updateAlerts(snap.spoofingAlerts);
+                }
+                updateTimestamp();
+            }
+        });
+
+        // Positions update (legacy)
+        socket.on('positions:update', (data) => {
+            wsMessageCount++;
+            updateWSCount();
+            
+            // Se la posizione è stata chiusa di recente, ignora gli aggiornamenti per evitare ghost positions
+            if (isInClosedGracePeriod()) {
+                // Aggiorna solo stats account, non la posizione
+                updateAccountStats(data);
+                updateTimestamp();
+                return;
+            }
+            
+            // Reset flag solo se grace period è passato
+            if (positionClosed && !isInClosedGracePeriod()) {
+                positionClosed = false;
+            }
+            
+            updateAccountStats(data);
+            
+            const trades = data.trades || [];
+            const myTrades = trades.filter(t => t.symbol === currentSymbol);
+            renderPosition(myTrades);
+            
+            updateTimestamp();
+        });
+
+        // Real-time positions
+        socket.on('positions:realtime', (summary) => {
+            wsMessageCount++;
+            updateWSCount();
+            
+            // Se la posizione è stata chiusa di recente, ignora gli aggiornamenti per evitare ghost positions
+            if (isInClosedGracePeriod()) {
+                // Aggiorna solo stats account, non la posizione
+                updateAccountStatsRealtime(summary);
+                updateTimestamp();
+                return;
+            }
+            
+            // Reset flag solo se grace period è passato
+            if (positionClosed && !isInClosedGracePeriod()) {
+                positionClosed = false;
+            }
+            
+            updateAccountStatsRealtime(summary);
+            
+            const positions = summary.positions || [];
+            const myPositions = positions.filter(p => p.symbol === currentSymbol);
+            renderPositionRealtime(myPositions);
+            
+            updateTimestamp();
+        });
+
+        // ★ TRADE CLOSED EVENT - Cruciale per aggiornare la UI
+        socket.on('trade:closed', (data) => {
+            console.log('🔒 Trade closed:', data);
+            wsMessageCount++;
+            updateWSCount();
+            
+            // Forza la chiusura della posizione nella UI
+            positionClosed = true;
+            positionClosedTimestamp = Date.now();
+            currentPosition = null;
+            
+            const noPos = document.getElementById('no-position');
+            const posCard = document.getElementById('position-card');
+            noPos.style.display = 'block';
+            posCard.style.display = 'none';
+            
+            // Nascondi warning conflitto
+            document.getElementById('conflict-warning').classList.remove('show');
+            
+            updateTimestamp();
+        });
+
+        // ★ POSITION CLOSED EVENT (from PositionManager - trailing stop, TP, SL, etc.)
+        socket.on('position:closed', (data) => {
+            console.log('🔒 Position closed by PositionManager:', data);
+            wsMessageCount++;
+            updateWSCount();
+            
+            // Forza la chiusura della posizione nella UI
+            positionClosed = true;
+            positionClosedTimestamp = Date.now();
+            currentPosition = null;
+            
+            const noPos = document.getElementById('no-position');
+            const posCard = document.getElementById('position-card');
+            noPos.style.display = 'block';
+            posCard.style.display = 'none';
+            
+            // Nascondi warning conflitto
+            document.getElementById('conflict-warning').classList.remove('show');
+            
+            updateTimestamp();
+        });
+
+        // ★ ALL TRADES CLOSED EVENT
+        socket.on('trades:allClosed', (data) => {
+            console.log('🔒 All trades closed:', data);
+            wsMessageCount++;
+            updateWSCount();
+            
+            positionClosed = true;
+            positionClosedTimestamp = Date.now();
+            currentPosition = null;
+            
+            const noPos = document.getElementById('no-position');
+            const posCard = document.getElementById('position-card');
+            noPos.style.display = 'block';
+            posCard.style.display = 'none';
+            
+            document.getElementById('conflict-warning').classList.remove('show');
+            
+            updateTimestamp();
+        });
+
+        // Stats update
+        socket.on('stats:update', (stats) => {
+            wsMessageCount++;
+            updateWSCount();
+            updateStats(stats);
+            updateTimestamp();
+        });
+
+        // Account update
+        socket.on('account:update', (account) => {
+            wsMessageCount++;
+            updateWSCount();
+            if (account.balance !== undefined) {
+                setText('balance', '$' + account.balance.toFixed(2));
+            }
+            updateTimestamp();
+        });
+
+        // Recent trades
+        socket.on('trades:recent', (trades) => {
+            wsMessageCount++;
+            updateWSCount();
+            updateTrades(trades);
+            updateTimestamp();
+        });
+
+        // Trade execution
+        socket.on('trade:execution', (execution) => {
+            wsMessageCount++;
+            updateWSCount();
+            console.log('🔔 Trade execution:', execution);
+            
+            // Se è una chiusura trade, aggiorna la UI
+            if (execution.type === 'CLOSE' || execution.type === 'close') {
+                positionClosed = true;
+                positionClosedTimestamp = Date.now();
+                currentPosition = null;
+                
+                const noPos = document.getElementById('no-position');
+                const posCard = document.getElementById('position-card');
+                noPos.style.display = 'block';
+                posCard.style.display = 'none';
+                
+                document.getElementById('conflict-warning').classList.remove('show');
+            }
+            
+            updateTimestamp();
+        });
+
+        // Spoofing alerts
+        socket.on('liquidity:spoofing', (alerts) => {
+            wsMessageCount++;
+            updateWSCount();
+            updateAlerts(alerts);
+            updateTimestamp();
+        });
+
+        // ===========================================
+        // UPDATE FUNCTIONS
+        // ===========================================
+        
+        function updateConnectionStatus(connected) {
+            const bar = document.getElementById('connection-bar');
+            const status = document.getElementById('connection-status');
+            
+            if (connected) {
+                bar.classList.remove('disconnected');
+                status.innerHTML = '<span class="status-dot active"></span> WebSocket Connesso';
+            } else {
+                bar.classList.add('disconnected');
+                status.innerHTML = '<span class="status-dot disconnected"></span> Disconnesso - Riconnessione...';
+            }
+        }
+
+        function updateWSCount() {
+            setText('ws-count', String(wsMessageCount));
+        }
+
+        function updateTimestamp() {
+            setText('last-update', 'Ultimo aggiornamento: ' + new Date().toLocaleTimeString('it-IT'));
+        }
+
+        function updateSignal(data) {
+            const action = data.action || 'WAIT';
+            const conf = data.confidence || 0;
+            
+            currentSignal = { action, confidence: conf };
+            
+            throttledUpdate('signal', () => {
+                setClass('signal-box', 'signal-box ' + action.toLowerCase());
+                setClass('signal-action', 'signal-action ' + action.toLowerCase());
+                setText('signal-action', translateAction(action));
+                setText('signal-conf', conf + '%');
+                setText('signal-reasoning', data.reasoning || 'Nessun segnale');
+            });
+
+            const d = data.details || {};
+            const bidVol = d.bidSpoofVolume || 0;
+            const askVol = d.askSpoofVolume || 0;
+            const totalVol = bidVol + askVol;
+            
+            // Cache dati spoofing validi
+            if (totalVol > 0) {
+                stateCache.lastSpoofData = { bid: bidVol, ask: askVol, total: totalVol, details: d };
+            }
+            
+            // Usa i dati correnti o quelli cachati
+            const displayBid = totalVol > 0 ? bidVol : (stateCache.lastSpoofData?.bid || 0);
+            const displayAsk = totalVol > 0 ? askVol : (stateCache.lastSpoofData?.ask || 0);
+            const displayDetails = totalVol > 0 ? d : (stateCache.lastSpoofData?.details || d);
+            
+            const ratio = ((displayDetails.spoofRatio || 0) * 100).toFixed(0);
+
+            setText('dominant-side', displayBid > displayAsk ? 'BID (Vendita)' : displayAsk > displayBid ? 'ASK (Acquisto)' : '-');
+            setText('spoof-ratio', ratio + '%');
+            setText('spoof-volume', (displayBid + displayAsk).toFixed(1) + ' ' + symbolShort);
+
+            // Update spoofing meter
+            throttledUpdate('spoof-meter', () => {
+                const total = displayBid + displayAsk || 1;
+                const bidPct = (displayBid / total * 100).toFixed(0);
+                const askPct = (displayAsk / total * 100).toFixed(0);
+                
+                const bidBar = document.getElementById('bid-bar');
+                const askBar = document.getElementById('ask-bar');
+                if (bidBar) bidBar.style.width = bidPct + '%';
+                if (askBar) askBar.style.width = askPct + '%';
+                
+                setText('bid-pct', bidPct + '%');
+                setText('ask-pct', askPct + '%');
+                setText('bid-vol', displayBid.toFixed(1));
+                setText('ask-vol', displayAsk.toFixed(1));
+                setText('alerts-count', String((displayDetails.bidSpoofCount || 0) + (displayDetails.askSpoofCount || 0)));
+            });
+
+            // Update flow steps
+            throttledUpdate('flow', () => {
+                const alerts = displayDetails.highConfidenceAlerts || 0;
+                updateFlowStep('flow-1', alerts >= 3, alerts + ' allarmi');
+                updateFlowStep('flow-2', parseFloat(ratio) >= 70, ratio + '%');
+                updateFlowStep('flow-3', conf >= 78, conf + '%');
+                
+                const signalStep = document.getElementById('flow-4');
+                if (signalStep) {
+                    signalStep.className = 'flow-step' + (action !== 'WAIT' ? ' pass' : '');
+                    setText('flow-4-value', translateAction(action));
+                    document.getElementById('flow-4-value').style.color = action === 'BUY' ? 'var(--green)' : action === 'SELL' ? 'var(--red)' : '';
+                }
+            });
+
+            // Update chart
+            throttledUpdate('chart', () => updateChart(displayBid, displayAsk));
+            
+            checkConflict();
+        }
+
+        function updateFlowStep(id, pass, value) {
+            const el = document.getElementById(id);
+            el.className = 'flow-step ' + (pass ? 'pass' : 'fail');
+            document.getElementById(id + '-value').textContent = value;
+        }
+
+        // Aggiorna statistiche account
+        function updateAccountStats(data) {
+            if (data.balance !== undefined) {
+                setText('balance', '$' + data.balance.toFixed(2));
+            }
+            if (data.equity !== undefined) {
+                setText('equity', '$' + data.equity.toFixed(2));
+            }
+            if (data.unrealizedPnl !== undefined) {
+                const el = document.getElementById('unrealized');
+                el.textContent = formatPnl(data.unrealizedPnl);
+                el.className = 'stat-value ' + (data.unrealizedPnl >= 0 ? 'green' : 'red');
+            }
+        }
+        
+        function updateAccountStatsRealtime(summary) {
+            if (summary.balance !== undefined) {
+                setText('balance', '$' + summary.balance.toFixed(2));
+            }
+            if (summary.equity !== undefined) {
+                setText('equity', '$' + summary.equity.toFixed(2));
+            }
+            if (summary.totalUnrealizedPnl !== undefined) {
+                const el = document.getElementById('unrealized');
+                el.textContent = formatPnl(summary.totalUnrealizedPnl);
+                el.className = 'stat-value ' + (summary.totalUnrealizedPnl >= 0 ? 'green' : 'red');
+            }
+        }
+
+        // Renderizza posizione (legacy)
+        function renderPosition(trades) {
+            const noPos = document.getElementById('no-position');
+            const posCard = document.getElementById('position-card');
+            
+            // Non mostrare posizione durante grace period dopo chiusura
+            if (isInClosedGracePeriod()) {
+                noPos.style.display = 'block';
+                posCard.style.display = 'none';
+                currentPosition = null;
+                return;
+            }
+            
+            if (!trades || trades.length === 0) {
+                noPos.style.display = 'block';
+                posCard.style.display = 'none';
+                currentPosition = null;
+                return;
+            }
+
+            noPos.style.display = 'none';
+            posCard.style.display = 'grid';
+
+            const pos = trades[0];
+            currentPosition = pos;
+            
+            const isLong = pos.side === 'buy';
+            const entry = parseFloat(pos.entry_price) || 0;
+            
+            setClass('pos-side', 'pos-side ' + (isLong ? 'long' : 'short'));
+            setText('pos-side', isLong ? 'LONG' : 'SHORT');
+            setClass('position-card', 'position-card ' + (isLong ? 'long' : 'short'));
+            setText('pos-symbol', pos.symbol);
+            setText('pos-leverage', (parseInt(pos.leverage) || 20) + 'x');
+            setText('pos-size', (parseFloat(pos.quantity) || 0).toFixed(6));
+            
+            // Aggiorna P&L
+            const current = parseFloat(pos.current_price) || currentPrice || entry;
+            const leverage = parseInt(pos.leverage) || 20;
+            const pnl = parseFloat(pos.unrealized_pnl) || 0;
+            const pnlPct = entry > 0 ? ((current - entry) / entry * 100 * leverage * (isLong ? 1 : -1)) : 0;
+            
+            setText('pos-prices', `Entrata: $${entry.toLocaleString('it-IT', {minimumFractionDigits: 2})} | Attuale: $${current.toLocaleString('it-IT', {minimumFractionDigits: 2})}`);
+            setClass('pos-pnl-box', 'pos-pnl ' + (pnl >= 0 ? 'profit' : 'loss'));
+            setText('pos-pnl', formatPnl(pnl));
+            setText('pos-pnl-pct', (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%');
+            
+            checkConflict();
+        }
+
+        // Renderizza posizione (realtime)
+        function renderPositionRealtime(positions) {
+            const noPos = document.getElementById('no-position');
+            const posCard = document.getElementById('position-card');
+            
+            // Non mostrare posizione durante grace period dopo chiusura
+            if (isInClosedGracePeriod()) {
+                noPos.style.display = 'block';
+                posCard.style.display = 'none';
+                currentPosition = null;
+                return;
+            }
+            
+            if (!positions || positions.length === 0) {
+                noPos.style.display = 'block';
+                posCard.style.display = 'none';
+                currentPosition = null;
+                return;
+            }
+
+            noPos.style.display = 'none';
+            posCard.style.display = 'grid';
+
+            const pos = positions[0];
+            currentPosition = { 
+                side: pos.side.toLowerCase(), 
+                entry_price: pos.entryPrice,
+                leverage: pos.leverage || 20,
+                quantity: pos.quantity
+            };
+            
+            const isLong = pos.side === 'BUY';
+            const entry = pos.entryPrice || 0;
+            
+            setClass('pos-side', 'pos-side ' + (isLong ? 'long' : 'short'));
+            setText('pos-side', isLong ? 'LONG' : 'SHORT');
+            setClass('position-card', 'position-card ' + (isLong ? 'long' : 'short'));
+            setText('pos-symbol', pos.symbol);
+            setText('pos-leverage', (pos.leverage || 20) + 'x');
+            setText('pos-size', (pos.quantity || 0).toFixed(6));
+            
+            // Aggiorna P&L
+            const current = pos.currentPrice || currentPrice || entry;
+            const leverage = pos.leverage || 20;
+            const pnl = pos.unrealizedPnl || 0;
+            const pnlPct = entry > 0 ? ((current - entry) / entry * 100 * leverage * (isLong ? 1 : -1)) : 0;
+            
+            setText('pos-prices', `Entrata: $${entry.toLocaleString('it-IT', {minimumFractionDigits: 2})} | Attuale: $${current.toLocaleString('it-IT', {minimumFractionDigits: 2})}`);
+            setClass('pos-pnl-box', 'pos-pnl ' + (pnl >= 0 ? 'profit' : 'loss'));
+            setText('pos-pnl', formatPnl(pnl));
+            setText('pos-pnl-pct', (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%');
+            
+            checkConflict();
+        }
+
+        // ★ AGGIORNA P&L IN TEMPO REALE usando il prezzo corrente
+        function updateLivePositionPnl() {
+            if (!currentPosition || !currentPrice || currentPrice <= 0) return;
+            
+            const pos = currentPosition;
+            const entry = parseFloat(pos.entry_price) || 0;
+            if (entry <= 0) return;
+            
+            const isLong = pos.side === 'buy';
+            const leverage = parseInt(pos.leverage) || 20;
+            const quantity = parseFloat(pos.quantity) || 0;
+            
+            // Calcola P&L in tempo reale
+            let pnl = 0;
+            if (isLong) {
+                pnl = (currentPrice - entry) * quantity * leverage;
+            } else {
+                pnl = (entry - currentPrice) * quantity * leverage;
+            }
+            
+            // Stima fee di uscita (0.035%)
+            const exitFee = currentPrice * quantity * 0.00035;
+            pnl -= exitFee;
+            
+            const pnlPct = ((currentPrice - entry) / entry * 100 * leverage * (isLong ? 1 : -1));
+            
+            setText('pos-prices', `Entrata: $${entry.toLocaleString('it-IT', {minimumFractionDigits: 2})} | Attuale: $${currentPrice.toLocaleString('it-IT', {minimumFractionDigits: 2})}`);
+            setClass('pos-pnl-box', 'pos-pnl ' + (pnl >= 0 ? 'profit' : 'loss'));
+            setText('pos-pnl', formatPnl(pnl));
+            setText('pos-pnl-pct', (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%');
+        }
+
+        function updateStats(stats) {
+            // Debug: log stats ricevute
+            console.log('📊 Stats update:', stats);
+            
+            const winRate = parseFloat(stats?.winRate || stats?.win_rate || 0);
+            const totalTrades = parseInt(stats?.totalTrades) || parseInt(stats?.total_closed) || 0;
+            const todayPnl = parseFloat(stats?.today_pnl) || 0;
+            const currentBal = parseFloat(stats?.current_balance) || 100;
+            const todayPct = currentBal > 0 ? (todayPnl / currentBal * 100) : 0;
+
+            const todayEl = document.getElementById('today-pnl');
+            todayEl.textContent = formatPnl(todayPnl);
+            todayEl.className = 'stat-value ' + (todayPnl >= 0 ? 'green' : 'red');
+            setText('today-pct', (todayPct >= 0 ? '+' : '') + todayPct.toFixed(2) + '%');
+
+            setText('winrate', winRate.toFixed(0) + '%');
+            document.getElementById('winrate').className = 'stat-value ' + (winRate >= 50 ? 'green' : 'red');
+            setText('trades-count', totalTrades + ' trades');
+        }
+
+        function updateTrades(trades) {
+            const container = document.getElementById('trades-list');
+            if (!trades || trades.length === 0) {
+                container.innerHTML = '<div class="list-empty">Nessun trade</div>';
+                return;
+            }
+
+            container.innerHTML = trades.map(t => {
+                const pnl = parseFloat(t.pnl) || 0;
+                const time = new Date(t.closed_at || t.created_at).toLocaleTimeString('it-IT');
+                return `
+                    <div class="list-item">
+                        <span style="color: var(--text-dim); min-width: 60px;">${time}</span>
+                        <span class="trade-side ${t.side}">${t.side.toUpperCase()}</span>
+                        <span>${t.symbol.split('-')[0]}</span>
+                        <span style="color: var(--text-dim);">$${parseFloat(t.entry_price).toLocaleString('it-IT')}</span>
+                        <span class="trade-pnl ${pnl >= 0 ? 'profit' : 'loss'}">${formatPnl(pnl)}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateAlerts(alerts) {
+            const container = document.getElementById('alerts-list');
+            if (!alerts || alerts.length === 0) {
+                container.innerHTML = '<div class="list-empty">Nessun allarme</div>';
+                return;
+            }
+
+            container.innerHTML = alerts.slice(0, 15).map(a => `
+                <div class="list-item">
+                    <span>${a.side === 'BID' ? '🟢' : '🔴'}</span>
+                    <span style="min-width: 80px;">$${a.priceLevel.toLocaleString('it-IT')}</span>
+                    <span style="color: var(--yellow);">${a.originalSize.toFixed(1)}</span>
+                    <span style="color: var(--text-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${a.message.substring(0, 35)}</span>
+                </div>
+            `).join('');
+        }
+
+        function updateChart(bidVol, askVol) {
+            const now = new Date().toLocaleTimeString('it-IT');
+            
+            chartData.labels.push(now);
+            chartData.bid.push(bidVol);
+            chartData.ask.push(askVol);
+            
+            if (chartData.labels.length > 60) {
+                chartData.labels.shift();
+                chartData.bid.shift();
+                chartData.ask.shift();
+            }
+
+            chart.data.labels = chartData.labels;
+            chart.data.datasets[0].data = chartData.bid;
+            chart.data.datasets[1].data = chartData.ask;
+            chart.update('none');
+        }
+
+        // ===========================================
+        // CONFLICT DETECTION
+        // ===========================================
+        function checkConflict() {
+            const warning = document.getElementById('conflict-warning');
+            
+            // Non mostrare conflitto se siamo nel grace period dopo chiusura
+            if (isInClosedGracePeriod()) {
+                warning.classList.remove('show');
+                return;
+            }
+            
+            if (!currentPosition || currentSignal.action === 'WAIT') {
+                warning.classList.remove('show');
+                return;
+            }
+
+            const positionSide = currentPosition.side;
+            const signalAction = currentSignal.action;
+            
+            const isConflict = (positionSide === 'buy' && signalAction === 'SELL') ||
+                               (positionSide === 'sell' && signalAction === 'BUY');
+
+            if (isConflict && currentSignal.confidence >= 50) {
+                warning.classList.add('show');
+                document.getElementById('conflict-title').textContent = 
+                    `Segnale ${translateAction(signalAction)} (${currentSignal.confidence}%) vs Posizione ${positionSide === 'buy' ? 'LONG' : 'SHORT'}`;
+                document.getElementById('conflict-desc').textContent = 
+                    `Il sistema segnala di ${signalAction === 'BUY' ? 'COMPRARE' : 'VENDERE'} ma hai una posizione ${positionSide === 'buy' ? 'LONG' : 'SHORT'} aperta.`;
+            } else {
+                warning.classList.remove('show');
+            }
+        }
+
+        // ===========================================
+        // ACTIONS
+        // ===========================================
+        async function closePosition() {
+            if (!confirm('Chiudere la posizione?')) return;
+            
+            try {
+                const res = await fetch('/api/trades/close-all', { method: 'POST' });
+                if (!res.ok) {
+                    alert('Errore nella chiusura');
+                }
+            } catch (err) {
+                alert('Errore: ' + err.message);
+            }
+        }
+
+        // ===========================================
+        // RESET FUNCTIONS
+        // ===========================================
+        function showResetModal() {
+            document.getElementById('reset-modal').classList.add('show');
+        }
+
+        function hideResetModal() {
+            document.getElementById('reset-modal').classList.remove('show');
+        }
+
+        async function resetBalance() {
+            if (!confirm('Sei sicuro di voler resettare solo il balance a $100?')) return;
+            try {
+                const res = await fetch('/api/account/reset', { method: 'POST' });
+                if (res.ok) {
+                    hideResetModal();
+                    alert('Balance resettato a $100!');
+                } else {
+                    throw new Error('Errore nel reset');
+                }
+            } catch (err) {
+                alert('Errore: ' + err.message);
+            }
+        }
+
+        async function resetAll() {
+            if (!confirm('⚠️ ATTENZIONE: Questo cancellerà TUTTI i trades e resetterà il balance. Continuare?')) return;
+            try {
+                const res = await fetch('/api/reset-all', { method: 'POST' });
+                if (res.ok) {
+                    hideResetModal();
+                    alert('Reset completo eseguito!');
+                    location.reload();
+                } else {
+                    throw new Error('Errore nel reset');
+                }
+            } catch (err) {
+                alert('Errore: ' + err.message);
+            }
+        }
+
+        // ===========================================
+        // HELPERS
+        // ===========================================
+        function translateAction(action) {
+            const map = { 'BUY': 'COMPRA', 'SELL': 'VENDI', 'WAIT': 'ATTESA', 'HOLD': 'MANTIENI' };
+            return map[action] || action;
+        }
+
+        function formatPnl(value) {
+            return (value >= 0 ? '+' : '') + '$' + value.toFixed(2);
+        }
+
+        // ===========================================
+        // INIT
+        // ===========================================
+        function init() {
+            // Update active symbol button
+            document.querySelectorAll('.symbol-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.symbol === currentSymbol);
+            });
+            
+            // Init chart
+            const ctx = document.getElementById('chart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'BID', data: [], borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.3 },
+                        { label: 'ASK', data: [], borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.1)', fill: true, tension: 0.3 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: { legend: { display: true, labels: { color: '#8b949e', font: { size: 10 } } } },
+                    scales: {
+                        x: { display: false },
+                        y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } }
+                    }
+                }
+            });
+        }
+
+        init();
+    </script>
+</body>
+</html>
