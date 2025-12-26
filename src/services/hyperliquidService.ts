@@ -332,8 +332,11 @@ class HyperliquidService {
         }
       }
 
-      // Round price to safe decimals (5 significant digits or max 6 decimals)
+      // Round price to tick size to ensure divisibility
       if (limitPx) {
+        // Assume tick size of 0.5 for BTC-PERP (common for crypto perpetuals)
+        const tickSize = 0.5;
+        limitPx = Math.round(limitPx / tickSize) * tickSize;
         // Use 5 decimals as a safe default for price to avoid floatToWire errors
         limitPx = parseFloat(limitPx.toFixed(5));
       }

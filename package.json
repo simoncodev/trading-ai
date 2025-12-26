@@ -9,7 +9,7 @@
     "web": "npm run build && node dist/index.js web",
     "trade": "npm run build && node dist/index.js trade",
     "bot": "npm run build && node dist/index.js trade",
-    "start": "npm run build && concurrently --names \"WEB,BOT\" --prefix-colors \"cyan,magenta\" \"node dist/index.js web\" \"node dist/index.js trade\"",
+    "start": "npm run build && node dist/index.js trade",
     "backtest": "npm run build && node dist/index.js backtest",
     "analyze": "npm run build && node dist/index.js analyze",
     "report": "npm run build && node dist/index.js report",
