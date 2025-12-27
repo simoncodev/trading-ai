@@ -285,6 +285,18 @@ export interface Config {
   risk: RiskConfig;
   system: SystemConfig;
   indicators: IndicatorConfig;
+  regime?: RegimeConfig;
+  marketData?: MarketDataConfig;
+}
+
+export interface MarketDataConfig {
+  useWsMarketData: boolean;
+  wsUrl: string;
+  wsStaleMs: number;
+  wsReconnectMaxDelayMs: number;
+  httpFallbackMinIntervalMs: number;
+  fallbackCheckIntervalMs: number;
+  orderBookDepth: number;
 }
 
 export interface HyperliquidConfig {
@@ -311,6 +323,7 @@ export interface TradingConfig {
   confidenceThreshold: number;
   startingBalance: number; // Capital iniziale (es: 100$)
   positionSizePercentage: number; // % capital per trade (es: 10)
+  positionSizeMultiplier?: number; // Optional multiplier to scale sizing (e.g., 2 => double size)
   maxPositions: number; // Max posizioni contemporanee (es: 5)
   minLeverage: number; // Leva minima (es: 2x)
   maxLeverage: number; // Leva massima (es: 10x)
@@ -340,6 +353,169 @@ export interface IndicatorConfig {
   macdSignal: number;
   bollingerPeriod: number;
   bollingerStdDev: number;
+}
+
+export interface RegimeConfig {
+  symbols: string[];
+  leverage: number;
+  maxExecutionSlippageBps: number;
+  executionTicks: number;
+  dataStaleMs: number;
+  compressionRatio: number;
+  volumeSpikeMult: number;
+  rangeWindowMinutes: number;
+  volShortMinutes: number;
+  volLongMinutes: number;
+  minNetEdgeBps: number;
+  spreadBpsEst: number;
+  slippageBpsEst: number;
+  takerFeeBps: number;
+  riskPerTradePct: number;
+  stopAtrMult: number;
+  tpRMult: number;
+  timeStopSeconds: number;
+  maxHoldSeconds: number;
+  maxTradesPerDay: number;
+  cooldownSeconds: number;
+  maxDailyDrawdownPct: number;
+  maxConsecutiveLosses: number;
+  fundingFilter?: number;
+  minProgressBps?: number;
+  dryRun: boolean;
+  // ========== MAKER-FIRST EXECUTION ==========
+  regimeEvalIntervalMs?: number;
+  makerFeeBps?: number;
+  spreadBpsEstMax?: number;
+  makerFirst?: boolean;
+  makerPostOnly?: boolean;
+  quoteTickOffset?: number;
+  maxQueueWaitMs?: number;
+  maxRequotePerSec?: number;
+  allowTakerFallback?: boolean;
+  takerOnlyIfNetEdgeBps?: number;
+  regimeSignalCacheTtlMs?: number;
+}
+
+// Dashboard Data Contract (new)
+export interface StrategyConfigSnapshot extends RegimeConfig {
+  symbols: string[];
+  trading_enabled?: boolean;
+}
+
+export interface MarketSnapshot {
+  ts: number;
+  symbol: string;
+  price_last: number;
+  best_bid: number;
+  best_ask: number;
+  mid: number;
+  spread_bps: number;
+  volume_1m: number;
+  avg_volume_15m: number;
+  funding_rate?: number;
+  data_latency_ms?: number;
+}
+
+export interface RegimeSignalSnapshot {
+  ts: number;
+  symbol: string;
+  compression: boolean;
+  volume_spike: boolean;
+  breakout_direction: 'LONG' | 'SHORT' | 'NONE';
+  breakout_level: number | null;
+  range_high: number | null;
+  range_low: number | null;
+  vol_5m: number;
+  vol_30m: number;
+  atr_5m?: number;
+  volume_zscore?: number;
+  notes?: string;
+}
+
+export interface EdgeGateEvaluation {
+  ts: number;
+  symbol: string;
+  expected_move_bps: number;
+  cost_bps_total: number;
+  cost_breakdown: {
+    fee_bps: number;
+    spread_bps_est: number;
+    slippage_bps_est: number;
+    funding_bps_est?: number;
+  };
+  net_edge_bps: number;
+  pass: boolean;
+  reason: string;
+}
+
+export interface TradeLifecycleState {
+  state: 'IDLE' | 'ENTERING' | 'OPEN' | 'EXITING' | 'COOLDOWN';
+  state_since_ts: number;
+  cooldown_remaining_s?: number;
+  open_position?: {
+    side: 'buy' | 'sell';
+    size: number;
+    entry_px: number;
+    entry_ts: number;
+    unrealized_pnl?: number;
+    notional?: number;
+    leverage?: number;
+  } | null;
+  active_order?: {
+    order_id: string;
+    side: 'buy' | 'sell';
+    requested_px: number;
+    tif?: string;
+    reduce_only?: boolean;
+    status?: string;
+  } | null;
+}
+
+export interface ExecutionReport {
+  ts: number;
+  symbol: string;
+  side: 'buy' | 'sell';
+  intended_action: 'ENTRY' | 'EXIT' | 'STOP' | 'TAKE_PROFIT' | 'TIME_STOP' | 'MANUAL';
+  requested_px: number;
+  fill_px_avg: number;
+  filled_size: number;
+  maker_taker: 'MAKER' | 'TAKER' | 'UNKNOWN';
+  fee_paid: number;
+  fee_bps: number;
+  slippage_bps: number;
+  latency_ms?: number;
+}
+
+export interface TradeJournalEntry {
+  trade_id: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  entry_ts: number;
+  exit_ts?: number;
+  entry_px: number;
+  exit_px?: number;
+  size: number;
+  notional?: number;
+  realized_pnl_gross?: number;
+  realized_pnl_net?: number;
+  total_fees_paid?: number;
+  total_slippage_bps?: number;
+  max_adverse_excursion_bps?: number;
+  max_favorable_excursion_bps?: number;
+  exit_reason?: string;
+  signal_snapshot?: Partial<RegimeSignalSnapshot> | null;
+  execution_reports?: ExecutionReport[];
+}
+
+export interface RiskStatus {
+  ts: number;
+  daily_realized_pnl_net: number;
+  daily_drawdown_pct: number;
+  consecutive_losses: number;
+  trades_today: number;
+  kill_switch_active: boolean;
+  kill_switch_reason?: string | null;
+  last_error?: string | null;
 }
 
 // Logger Types

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Symbol Detail</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body{font-family:JetBrains Mono,monospace;background:#0d1117;color:#c9d1d9;padding:20px}
+    .card{background:#161b22;padding:12px;border-radius:8px;border:1px solid #30363d;margin-bottom:12px}
+    .grid{display:grid;grid-template-columns:1fr 320px;gap:12px}
+    .list{max-height:240px;overflow:auto}
+  </style>
+</head>
+<body>
+  <a href="/antispoof">← Back</a>
+  <h2 id="sym">Symbol</h2>
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h3>Price & Range</h3>
+        <canvas id="priceChart" height="160"></canvas>
+      </div>
+      <div class="card">
+        <h3>Volatility</h3>
+        <canvas id="volChart" height="120"></canvas>
+      </div>
+      <div class="card">
+        <h3>Signal Snapshot</h3>
+        <pre id="signalSnapshot">Loading...</pre>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Edge Gate</h3>
+        <div id="edgeBox">Loading...</div>
+      </div>
+      <div class="card">
+        <h3>Recent Executions</h3>
+        <div class="list" id="execList">Loading...</div>
+      </div>
+      <div class="card">
+        <h3>Trade Journal (closed)</h3>
+        <div class="list" id="tradeJournal">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const symbol = params.get('symbol') || 'BTC-USDC';
+    document.getElementById('sym').textContent = 'Symbol: ' + symbol;
+
+    async function loadSignal() {
+      try {
+        const res = await fetch(`/api/edge/${encodeURIComponent(symbol)}`);
+        const data = await res.json();
+        document.getElementById('signalSnapshot').textContent = JSON.stringify(data.signal || data, null, 2);
+        const e = data;
+        document.getElementById('edgeBox').innerHTML = `Expected: ${Number(e.expected_move_bps||0).toFixed(2)} bps<br/>Cost: ${Number(e.cost_bps_total||0).toFixed(2)} bps<br/>Net: ${Number(e.net_edge_bps||0).toFixed(2)} bps<br/>Pass: ${e.pass}`;
+      } catch (err) {
+        document.getElementById('signalSnapshot').textContent = 'failed';
+      }
+    }
+
+    async function loadExecutions() {
+      try {
+        const res = await fetch('/api/executions/recent?limit=50');
+        const rows = await res.json();
+        const list = document.getElementById('execList');
+        list.innerHTML = '';
+        rows.filter(r => r.symbol === symbol).slice(0,50).forEach(r => {
+          const d = document.createElement('div');
+          d.style.padding='6px';d.style.borderBottom='1px solid #30363d';
+          d.innerHTML = `<strong>${r.side}</strong> ${r.filled_size}@${Number(r.fill_px_avg).toFixed(2)} (${r.maker_taker}) <div style="font-size:11px;color:#8b949e">${new Date(r.created_at).toLocaleString()}</div>`;
+          list.appendChild(d);
+        });
+      } catch (e) { console.warn(e); }
+    }
+
+    async function loadJournal() {
+      try {
+        const res = await fetch(`/api/trades`);
+        const rows = await res.json();
+        const list = document.getElementById('tradeJournal');
+        list.innerHTML = '';
+        rows.filter(t => t.symbol === symbol).slice(0,50).forEach(t => {
+          const d = document.createElement('div');
+          d.style.padding='6px';d.style.borderBottom='1px solid #30363d';
+          d.innerHTML = `${t.side.toUpperCase()} ${Number(t.quantity).toFixed(4)} @ ${Number(t.entry_price).toFixed(2)} → ${t.status} <div style="font-size:11px;color:#8b949e">${t.executed_at}</div>`;
+          list.appendChild(d);
+        });
+      } catch (e) { console.warn(e); }
+    }
+
+    loadSignal(); loadExecutions(); loadJournal();
+    setInterval(loadExecutions,3000); setInterval(loadSignal,2000);
+  </script>
+</body>
+</html>

@@ -1,16 +1,13 @@
 import { logger } from '../core/logger';
 import hyperliquidService from './hyperliquidService';
 import { EventEmitter } from 'events';
-import { spooferProfiler } from './spooferProfiler';
 
 /**
- * LIQUIDITY TRACKER SERVICE
+ * LIQUIDITY TRACKER SERVICE (DEPRECATED)
  * 
- * Monitora continuamente la liquidità nell'order book e:
- * 1. Traccia i liquidity pools nel tempo
- * 2. Rileva ordini fantasma (spoofing)
- * 3. Calcola la "wave" direction - dove sta andando la liquidità
- * 4. Fornisce dati real-time per la dashboard
+ * @deprecated Use multiSymbolLiquidityTracker with WebSocket instead.
+ * This legacy tracker is kept for dashboard compatibility only.
+ * Polling is disabled - only initial snapshot is captured via rate-limited HTTP.
  */
 
 // ========================================
@@ -208,6 +205,8 @@ class LiquidityTracker extends EventEmitter {
   
   /**
    * Start tracking liquidity for a symbol
+   * NOTE: Polling disabled - use multiSymbolTracker with WebSocket instead
+   * This legacy tracker is kept for dashboard compatibility only
    */
   start(symbol: string): void {
     if (this.isRunning) {
@@ -218,11 +217,12 @@ class LiquidityTracker extends EventEmitter {
     this.symbol = symbol;
     this.isRunning = true;
     
-    logger.info(`[LiquidityTracker] Starting for ${symbol} with timeframe: ${this.currentTimeframe}`);
+    logger.info(`[LiquidityTracker] Starting for ${symbol} (polling DISABLED - use multiSymbolTracker)`);
     
-    // Run immediately and then at intervals
+    // Capture one initial snapshot, no interval polling
+    // Real-time data comes from multiSymbolTracker via WebSocket
     this.captureSnapshot();
-    this.intervalId = setInterval(() => this.captureSnapshot(), CONFIG.SNAPSHOT_INTERVAL_MS);
+    // DISABLED: this.intervalId = setInterval(() => this.captureSnapshot(), CONFIG.SNAPSHOT_INTERVAL_MS);
   }
   
   /**
@@ -238,16 +238,16 @@ class LiquidityTracker extends EventEmitter {
   }
   
   /**
-   * Capture a snapshot of current liquidity
+   * Capture a snapshot of current liquidity (rate-limited HTTP fallback)
    */
   private async captureSnapshot(): Promise<void> {
     try {
-      // Usa la profondità dell'order book dal timeframe
+      // Usa la profondità dell'order book dal timeframe (rate-limited fallback)
       const depth = this.timeframeConfig.orderBookDepth;
-      const orderBook = await hyperliquidService.getOrderBook(this.symbol, depth);
+      const orderBook = await hyperliquidService.getOrderBookFallback(this.symbol, depth);
       
       if (!orderBook || !orderBook.bids.length || !orderBook.asks.length) {
-        logger.debug('[LiquidityTracker] No order book data');
+        logger.debug('[LiquidityTracker] No order book data (rate-limited or empty)');
         return;
       }
       
@@ -317,21 +317,6 @@ class LiquidityTracker extends EventEmitter {
       
       // Emetti evento per WebSocket
       this.emit('snapshot', snapshot);
-      
-      // Feed spoofing alerts to profiler for fingerprinting
-      if (newSpoofingAlerts.length > 0) {
-        spooferProfiler.processAlerts(newSpoofingAlerts);
-      }
-      
-      // Log spoofing alerts
-      for (const alert of newSpoofingAlerts) {
-        logger.warn(`🚨 [SPOOFING] ${alert.message}`, {
-          price: alert.priceLevel,
-          side: alert.side,
-          size: alert.originalSize,
-          confidence: alert.confidence,
-        });
-      }
       
     } catch (error) {
       logger.error('[LiquidityTracker] Error capturing snapshot', error);

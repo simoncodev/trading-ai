@@ -37,30 +37,113 @@ async function main() {
         return;
     }
 
-    // Test Order Placement (Limit Buy @ $1000)
-    console.log('\n--- Placing Test Order (Limit Buy BTC-PERP @ $1000) ---');
+    // Get current prices via L2 book
+    console.log('\n--- Getting Current Market Data via L2 Book ---');
+    const l2Book = await sdk.info.getL2Book('BTC-PERP');
+    const bids = l2Book?.levels?.[0] || [];
+    const asks = l2Book?.levels?.[1] || [];
     
-    const orderRequest = {
-        coin: 'BTC-PERP',
-        is_buy: true,
-        sz: 0.001, // Min size
-        limit_px: 1000, // Deep OTM
-        order_type: { limit: { tif: 'Gtc' as const } },
-        reduce_only: false,
-    };
+    if (bids.length > 0 && asks.length > 0) {
+        const bidPrice = parseFloat(bids[0].px);
+        const askPrice = parseFloat(asks[0].px);
+        const markPrice = (bidPrice + askPrice) / 2;
+        
+        console.log('Best Bid:', bidPrice);
+        console.log('Best Ask:', askPrice);
+        console.log('Mark Price (mid):', markPrice);
+        console.log('Spread (Ask - Bid):', askPrice - bidPrice);
 
-    console.log('Sending order:', orderRequest);
-    const result = await sdk.exchange.placeOrder(orderRequest);
-    console.log('Order Result:', JSON.stringify(result, null, 2));
-
-    if (result.status === 'ok') {
-        const orderId = result.response.data.statuses[0].oid;
-        console.log(`\n--- Cancelling Order ${orderId} ---`);
-        const cancelResult = await sdk.exchange.cancelOrder({
+        // Test 1: Limit IOC exactly at mark price
+        console.log('\n--- TEST 1: LIMIT IOC exactly at mark price ---');
+        const iocAtMark = {
             coin: 'BTC-PERP',
-            o: orderId
-        });
-        console.log('Cancel Result:', JSON.stringify(cancelResult, null, 2));
+            is_buy: true,
+            sz: 0.001,
+            limit_px: Math.floor(markPrice),
+            order_type: { limit: { tif: 'Ioc' as const } },
+            reduce_only: false,
+        };
+        console.log('Sending Limit IOC at', Math.floor(markPrice), ':', iocAtMark);
+        try {
+            const result1 = await sdk.exchange.placeOrder(iocAtMark);
+            console.log('✅ Result:', JSON.stringify(result1, null, 2));
+        } catch (e: any) {
+            console.log('❌ Error:', e?.message || e);
+        }
+
+        // Test 2: Limit IOC at +3% from mark (within 5% boundary)
+        console.log('\n--- TEST 2: LIMIT IOC at +3% from mark (WITHIN limit) ---');
+        const ioc3PercentHigh = {
+            coin: 'BTC-PERP',
+            is_buy: true,
+            sz: 0.001,
+            limit_px: Math.floor(markPrice * 1.03),
+            order_type: { limit: { tif: 'Ioc' as const } },
+            reduce_only: false,
+        };
+        console.log('Sending Limit IOC at', Math.floor(markPrice * 1.03), ':', ioc3PercentHigh);
+        try {
+            const result2 = await sdk.exchange.placeOrder(ioc3PercentHigh);
+            console.log('✅ Result:', JSON.stringify(result2, null, 2));
+        } catch (e: any) {
+            console.log('❌ Error:', e?.message || e);
+        }
+
+        // Test 3: Limit IOC at -2% from mark (for selling)
+        console.log('\n--- TEST 3: LIMIT IOC at -2% from mark (SELL order) ---');
+        const ioc2PercentLow = {
+            coin: 'BTC-PERP',
+            is_buy: false,
+            sz: 0.001,
+            limit_px: Math.floor(markPrice * 0.98),
+            order_type: { limit: { tif: 'Ioc' as const } },
+            reduce_only: false,
+        };
+        console.log('Sending Limit IOC Sell at', Math.floor(markPrice * 0.98), ':', ioc2PercentLow);
+        try {
+            const result3 = await sdk.exchange.placeOrder(ioc2PercentLow);
+            console.log('✅ Result:', JSON.stringify(result3, null, 2));
+        } catch (e: any) {
+            console.log('❌ Error:', e?.message || e);
+        }
+
+        // Test 4: Limit IOC at +5% from mark (at the boundary)
+        console.log('\n--- TEST 4: LIMIT IOC at +5% from mark (BOUNDARY) ---');
+        const ioc5Percent = {
+            coin: 'BTC-PERP',
+            is_buy: true,
+            sz: 0.001,
+            limit_px: Math.floor(markPrice * 1.05),
+            order_type: { limit: { tif: 'Ioc' as const } },
+            reduce_only: false,
+        };
+        console.log('Sending Limit IOC at', Math.floor(markPrice * 1.05), ':', ioc5Percent);
+        try {
+            const result4 = await sdk.exchange.placeOrder(ioc5Percent);
+            console.log('✅ Result:', JSON.stringify(result4, null, 2));
+        } catch (e: any) {
+            console.log('❌ Error:', e?.message || e);
+        }
+
+        // Test 5: Limit IOC at +6% from mark (OVER the boundary - should fail)
+        console.log('\n--- TEST 5: LIMIT IOC at +6% from mark (OVER boundary) ---');
+        const ioc6Percent = {
+            coin: 'BTC-PERP',
+            is_buy: true,
+            sz: 0.001,
+            limit_px: Math.floor(markPrice * 1.06),
+            order_type: { limit: { tif: 'Ioc' as const } },
+            reduce_only: false,
+        };
+        console.log('Sending Limit IOC at', Math.floor(markPrice * 1.06), ':', ioc6Percent);
+        try {
+            const result5 = await sdk.exchange.placeOrder(ioc6Percent);
+            console.log('✅ Result:', JSON.stringify(result5, null, 2));
+        } catch (e: any) {
+            console.log('❌ Error:', e?.message || e);
+        }
+    } else {
+        console.log('❌ Could not get order book data');
     }
 
   } catch (error: any) {

@@ -378,9 +378,13 @@
             animation: blink 0.5s infinite;
         }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
+    <!-- Kill Switch Banner (dynamically shown by JS) -->
+    <div id="killSwitchBanner" style="position:fixed;top:0;left:0;right:0;z-index:9999;padding:12px;text-align:center;font-weight:bold;font-size:16px;display:none;"></div>
+    
     <div class="container">
         <!-- HEADER -->
         <div class="header">
@@ -435,6 +439,53 @@
             </div>
         </div>
 
+        <!-- REGIME CHARTS -->
+        <div class="section">
+            <div class="section-header">◆ REGIME - Compressione & Volume</div>
+            <div class="section-body" style="display:flex;gap:8px;flex-wrap:wrap;padding:12px;">
+                <div style="flex:1;min-width:320px;">
+                    <div style="font-size:12px;color:#888;margin-bottom:6px">Compressione (vol5m / vol30m)</div>
+                    <canvas id="chartCompression" height="140"></canvas>
+                </div>
+                <div style="flex:1;min-width:320px;">
+                    <div style="font-size:12px;color:#888;margin-bottom:6px">Volume (1m) & Spike</div>
+                    <canvas id="chartVolume" height="140"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- WHY NO TRADES? -->
+        <div class="section">
+            <div class="section-header">◆ WHY NO TRADES? <span id="stalenessIndicator" style="float:right;font-size:12px;color:#888;"></span></div>
+            <div class="section-body" id="whyNoTrades" style="max-height:150px;overflow-y:auto;padding:8px;">
+                <div class="empty-state">No evaluations yet</div>
+            </div>
+        </div>
+
+        <!-- KILL SWITCH & LIMITS -->
+        <div class="section">
+            <div class="section-header">◆ KILL SWITCH & LIMITS</div>
+            <div class="section-body" id="killSwitchPanel" style="padding:0;">
+                <div class="empty-state">Loading...</div>
+            </div>
+        </div>
+
+        <!-- COOLDOWN & STATE PER SYMBOL -->
+        <div class="section">
+            <div class="section-header">◆ COOLDOWN & STATE (per symbol)</div>
+            <div class="section-body" id="cooldownPanel" style="padding:0;max-height:200px;overflow-y:auto;">
+                <div class="empty-state">Loading...</div>
+            </div>
+        </div>
+
+        <!-- EXECUTION QUALITY -->
+        <div class="section">
+            <div class="section-header">◆ EXECUTION QUALITY</div>
+            <div class="section-body" id="executionQuality" style="padding:0;">
+                <div class="empty-state">Loading...</div>
+            </div>
+        </div>
+
         <!-- LOG -->
         <div class="section">
             <div class="section-header">◆ ACTIVITY LOG</div>
@@ -442,6 +493,30 @@
                 <div class="empty-state">WAITING FOR SIGNALS...</div>
             </div>
         </div>
+
+                <!-- GATE EVALUATIONS -->
+                <div class="section">
+                    <div class="section-header">◆ GATE EVALUATIONS</div>
+                    <div class="section-body" id="gateEvaluations" style="max-height:200px; overflow-y:auto; padding:12px;">
+                        <div class="empty-state">No gate evaluations yet</div>
+                    </div>
+                </div>
+
+                <!-- LIFECYCLE -->
+                <div class="section">
+                    <div class="section-header">◆ LIFECYCLE (per symbol)</div>
+                    <div class="section-body" id="lifecycleList" style="display:flex;gap:8px;flex-wrap:wrap;padding:12px;">
+                        <div class="empty-state">No lifecycle events</div>
+                    </div>
+                </div>
+
+                <!-- RECENT EXECUTIONS -->
+                <div class="section">
+                    <div class="section-header">◆ RECENT EXECUTIONS</div>
+                    <div class="section-body" id="recentExecutions" style="max-height:200px; overflow-y:auto; padding:12px;">
+                        <div class="empty-state">No executions yet</div>
+                    </div>
+                </div>
 
         <!-- BUTTONS -->
         <div class="btn-row">
@@ -494,7 +569,7 @@
                 (parseFloat(stats.win_rate) >= 50 ? 'positive' : 'negative');
         });
 
-        // Positions update - filter out recently closed trades to prevent ghost positions
+        // Positions update - filter out recently closed trades to prevent stale display
         socket.on('positions:update', (data) => {
             // Filter out recently closed trades
             if (data.trades && recentlyClosedTrades) {
@@ -567,7 +642,7 @@
 
         // Trade closed event
         socket.on('trade:closed', (data) => {
-            // Track this trade as recently closed to prevent ghost positions
+            // Track this trade as recently closed to prevent stale display
             if (data.tradeId && recentlyClosedTrades) {
                 recentlyClosedTrades.set(data.tradeId, Date.now());
             }
@@ -582,7 +657,7 @@
 
         // Position closed event (from PositionManager)
         socket.on('position:closed', (data) => {
-            // Track this trade as recently closed to prevent ghost positions
+            // Track this trade as recently closed to prevent stale display
             if (data.tradeId && recentlyClosedTrades) {
                 recentlyClosedTrades.set(data.tradeId, Date.now());
             }

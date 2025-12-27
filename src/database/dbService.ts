@@ -251,6 +251,30 @@ class DatabaseService {
         )
       `);
 
+      // Executions table (per-order / per-fill execution reports)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS executions (
+          id SERIAL PRIMARY KEY,
+          exec_id VARCHAR(100) UNIQUE NOT NULL,
+          trade_id VARCHAR(100),
+          symbol VARCHAR(20) NOT NULL,
+          side VARCHAR(10) NOT NULL,
+          intended_action VARCHAR(30),
+          requested_px DECIMAL(18,8),
+          fill_px_avg DECIMAL(18,8),
+          filled_size DECIMAL(18,8),
+          maker_taker VARCHAR(10),
+          fee_paid DECIMAL(18,8),
+          fee_bps DECIMAL(10,4),
+          slippage_bps DECIMAL(10,4),
+          latency_ms INTEGER,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_executions_symbol ON executions(symbol)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_executions_created_at ON executions(created_at DESC)`);
+
       // Create indexes
       await client.query(`CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol)`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)`);
@@ -293,6 +317,16 @@ class DatabaseService {
         ORDER BY trade_date DESC
       `);
 
+      // Position states table for state-machine persistence
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS position_states (
+          trade_id VARCHAR(100) PRIMARY KEY,
+          symbol VARCHAR(20) NOT NULL,
+          state VARCHAR(30) NOT NULL,
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+      `);
+
       // Create function for updated_at trigger
       await client.query(`
         CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -330,6 +364,32 @@ class DatabaseService {
       throw error;
     } finally {
       client.release();
+    }
+  }
+
+  /**
+   * Set or update a position state for recovery and state-machine persistence
+   */
+  async setPositionState(tradeId: string, symbol: string, state: string): Promise<void> {
+    try {
+      const query = `
+        INSERT INTO position_states (trade_id, symbol, state, updated_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (trade_id) DO UPDATE SET state = EXCLUDED.state, updated_at = NOW()
+      `;
+      await this.pool.query(query, [tradeId, symbol, state]);
+    } catch (error) {
+      logger.error('Failed to set position state', error);
+    }
+  }
+
+  async getPositionState(tradeId: string): Promise<string | null> {
+    try {
+      const res = await this.pool.query('SELECT state FROM position_states WHERE trade_id = $1 LIMIT 1', [tradeId]);
+      return res.rows[0]?.state || null;
+    } catch (error) {
+      logger.error('Failed to get position state', error);
+      return null;
     }
   }
 
@@ -517,6 +577,57 @@ class DatabaseService {
     `;
     const result = await this.pool.query(query, [limit]);
     return result.rows;
+  }
+
+  /**
+   * Save execution report
+   */
+  async saveExecution(exec: any): Promise<void> {
+    try {
+      const query = `
+        INSERT INTO executions (
+          exec_id, trade_id, symbol, side, intended_action, requested_px, fill_px_avg,
+          filled_size, maker_taker, fee_paid, fee_bps, slippage_bps, latency_ms, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, NOW())
+        ON CONFLICT (exec_id) DO UPDATE SET
+          fill_px_avg = EXCLUDED.fill_px_avg,
+          filled_size = EXCLUDED.filled_size,
+          fee_paid = EXCLUDED.fee_paid,
+          fee_bps = EXCLUDED.fee_bps,
+          slippage_bps = EXCLUDED.slippage_bps,
+          latency_ms = EXCLUDED.latency_ms,
+          created_at = NOW()
+      `;
+
+      const values = [
+        exec.exec_id || exec.orderId || `exec_${Date.now()}`,
+        exec.trade_id || null,
+        exec.symbol,
+        exec.side,
+        exec.intended_action || exec.type || null,
+        exec.requested_px || exec.requestedPx || null,
+        exec.fill_px_avg || exec.fillPxAvg || exec.fillPx || null,
+        exec.filled_size || exec.filledSize || exec.size || 0,
+        exec.maker_taker || exec.makerTaker || 'UNKNOWN',
+        exec.fee_paid || exec.feePaid || 0,
+        exec.fee_bps || exec.feeBps || 0,
+        exec.slippage_bps || exec.slippageBps || 0,
+        exec.latency_ms || exec.latencyMs || null,
+      ];
+
+      await this.pool.query(query, values);
+    } catch (error) {
+      logger.error('Failed to save execution', error);
+    }
+  }
+
+  /**
+   * Get recent executions
+   */
+  async getRecentExecutions(limit = 50): Promise<any[]> {
+    const q = `SELECT * FROM executions ORDER BY created_at DESC LIMIT $1`;
+    const res = await this.pool.query(q, [limit]);
+    return res.rows;
   }
 
   /**

@@ -1065,7 +1065,7 @@ Remember: We need trades to make profits. Only reject clear counter-signals.
     
     // Get REAL current balance (not from .env)
     const currentBalance = await dbService.getCurrentBalance();
-    const positionSizePercentage = parseFloat(process.env.POSITION_SIZE_PERCENTAGE || '10');
+    const positionSizePercentage = parseFloat(process.env.POSITION_SIZE_PERCENTAGE || '50');
     const baseCapitalPerTrade = currentBalance * (positionSizePercentage / 100);
     
     // Apply dynamic size multiplier from filters

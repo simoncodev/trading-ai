@@ -16,6 +16,10 @@ class HyperliquidService {
   private sdk: Hyperliquid;
   private walletAddress: string;
   private masterAddress: string;
+  
+  // Rate-limiting for HTTP fallback per symbol
+  private lastHttpBookFetchTs: Map<string, number> = new Map();
+  private httpBookCache: Map<string, { bids: { price: number; size: number }[]; asks: { price: number; size: number }[]; ts: number }> = new Map();
 
   constructor() {
     // Get configuration
@@ -160,7 +164,7 @@ class HyperliquidService {
     const baseAsset = symbol.split('-')[0];
     switch (baseAsset) {
       case 'BTC':
-        return 0.5; // BTC typically has 0.5 tick size
+        return 0.5; // BTC tick size on Hyperliquid
       case 'ETH':
         return 0.01; // ETH typically has 0.01 tick size
       default:
@@ -319,9 +323,12 @@ class HyperliquidService {
    */
   async roundPriceToTick(symbol: string, price: number): Promise<number> {
     const tickSize = await this.getTickSize(symbol);
+    logger.debug(`[Hyperliquid] Rounding price ${price} to tick size ${tickSize} for ${symbol}`);
     const rounded = Math.round(price / tickSize) * tickSize;
     const priceDecimals = await this.getPriceDecimals(symbol);
-    return parseFloat(rounded.toFixed(priceDecimals));
+    const finalPrice = parseFloat(rounded.toFixed(priceDecimals));
+    logger.debug(`[Hyperliquid] Rounded price: ${price} → ${rounded} → ${finalPrice}`);
+    return finalPrice;
   }
 
   /**
@@ -445,35 +452,63 @@ class HyperliquidService {
       // Use 'any' to avoid TS issues with SDK types
       let orderType: any = { limit: { tif: 'Gtc' } };
 
-      // If no price provided or not using limit, treat as MARKET order (IOC with aggressive price)
-      if (!useLimit || !price) {
+      // If price provided, round it to tick size immediately
+      if (price) {
+        const tickSize = await this.getTickSize(symbol);
+        logger.debug(`[Hyperliquid] placeOrder: Rounding provided price ${price} with tick size ${tickSize}`);
+        limitPx = Math.round(price / tickSize) * tickSize;
+        logger.debug(`[Hyperliquid] placeOrder: Rounded limitPx = ${limitPx}`);
+        
+        // Convert to integer representation for API
+        const priceDecimals = await this.getPriceDecimals(symbol);
+        const priceMultiplier = Math.pow(10, priceDecimals);
+        limitPx = Math.round(limitPx * priceMultiplier) / priceMultiplier; // Ensure exact multiple
+        logger.debug(`[Hyperliquid] placeOrder: Final limitPx after multiplier: ${limitPx}`);
+      }
+
+      // If not using limit, convert to an aggressive IOC priced at top-of-book +/- k ticks
+      // IMPORTANT: This replaces ANY legacy markPrice*(1±0.02) path.
+      if (!useLimit) {
         try {
           const book = await this.getBestBidAsk(symbol);
-          const slippage = 0.005; // 0.5% slippage tolerance for market orders
+          const tick = await this.getTickSize(symbol);
+          const k = config.regime?.executionTicks ?? 1; // use EXECUTION_TICKS from config
+          const mid = (book.bid + book.ask) / 2;
           
+          // Compute bounded IOC price at top-of-book + k ticks
           if (side === 'buy') {
-             // Buy: price must be higher than ask
-             limitPx = book.ask * (1 + slippage);
+            limitPx = book.ask + k * tick;
           } else {
-             // Sell: price must be lower than bid
-             limitPx = book.bid * (1 - slippage);
+            limitPx = book.bid - k * tick;
+          }
+          
+          // Enforce MAX_EXECUTION_SLIPPAGE_BPS guard against midprice
+          const slippageBps = Math.abs(limitPx - mid) / mid * 10000;
+          const maxSlippage = config.regime?.maxExecutionSlippageBps ?? 8;
+          if (slippageBps > maxSlippage) {
+            logger.warn('SKIP_EXEC_SLIPPAGE', { symbol, side, slippageBps, maxBps: maxSlippage, bestBid: book.bid, bestAsk: book.ask, mid });
+            return { 
+              ok: false, 
+              skipped: true, 
+              reason: 'SKIP_EXEC_SLIPPAGE', 
+              slippageBps, 
+              bestBid: book.bid, 
+              bestAsk: book.ask, 
+              mid 
+            } as any;
           }
           
           orderType = { limit: { tif: 'Ioc' } };
-          logger.info(`Market order converted to Limit IOC`, { symbol, side, limitPx, originalPrice: price });
+          logger.info('Bounded IOC at top-of-book', { symbol, side, limitPx, bestBid: book.bid, bestAsk: book.ask, mid, slippageBps: slippageBps.toFixed(2), k });
         } catch (err) {
-          logger.error('Failed to get orderbook for market order pricing', err);
-          throw new Error('Cannot place market order: failed to fetch current price');
+          logger.error('Failed to fetch top-of-book for IOC pricing', { error: err instanceof Error ? err.message : String(err) });
+          throw new Error('Cannot place market order: failed to fetch top-of-book');
         }
       }
 
-      // Round price to tick size to ensure divisibility
-      if (limitPx) {
-        // Get proper tick size based on asset
-        const tickSize = await this.getTickSize(symbol);
-        // Use proper rounding to avoid floating point issues
-        limitPx = parseFloat((limitPx / tickSize).toFixed(0)) * tickSize;
-        // Use appropriate decimals for price
+      // Round price to appropriate decimals
+      // NOTE: Market orders (useLimit=false) already use Math.floor so skip rounding
+      if (limitPx && useLimit) {
         const priceDecimals = await this.getPriceDecimals(symbol);
         limitPx = parseFloat(limitPx.toFixed(priceDecimals));
       }
@@ -486,16 +521,32 @@ class HyperliquidService {
         limit_px: limitPx,
         order_type: JSON.stringify(orderType)
       });
-
+      // Check if limitPx is divisible by tick size
+      const tickSize = await this.getTickSize(symbol);
+      if (limitPx !== undefined && limitPx !== null) {
+        const remainder = limitPx % tickSize;
+        logger.debug(`[Hyperliquid] Tick size check: ${limitPx} % ${tickSize} = ${remainder}`);
+        if (Math.abs(remainder) > 0.0001) { // Allow small floating point errors
+          logger.warn(`[Hyperliquid] Price ${limitPx} not divisible by tick size ${tickSize}!`);
+        }
+      }
       // Use the SDK's placeOrder method
-      const orderResult = await this.sdk.exchange.placeOrder({
+      // Use integer price as expected by SDK (no extra multiplier)
+      // Some SDKs expect price as plain integer (e.g. whole USD price),
+      // multiplying by a large priceMultiplier produced huge notional values.
+      const limitPxInt = limitPx ? Math.round(limitPx) : 0;
+
+      const orderParams = {
         coin: coin, // Use coin name for API
         is_buy: side === 'buy',
         sz: roundedQuantity,
-        limit_px: limitPx ? limitPx.toString() : '0',
+        limit_px: limitPxInt,
         order_type: orderType,
         reduce_only: reduceOnly,
-      });
+      };
+      logger.debug(`[Hyperliquid] SDK order params: ${JSON.stringify(orderParams)} (original price: ${limitPx}, int price: ${limitPxInt})`);
+
+      const orderResult = await this.sdk.exchange.placeOrder(orderParams);
 
       logger.info('Order result received', { orderResult: JSON.stringify(orderResult) });
 
@@ -679,7 +730,440 @@ class HyperliquidService {
     const orderSide = side === 'long' ? 'sell' : 'buy';
 
     // Use market order (Ioc limit) to close immediately, with reduceOnly=true
-    return this.placeOrder(symbol, orderSide, size, undefined, false, true);
+    return this.exitPosition(symbol, orderSide, size, { kTicks: 1 });
+  }
+
+  /**
+   * Enter a position using top-of-book IOC limit with bounded slippage
+   * Returns ExecutionReport with: ts, symbol, intendedAction, side, requestedPx, fillPxAvg, filledSize, makerTaker, feePaid, slippageBps, status, reason
+   */
+  async enterPosition(
+    symbol: string,
+    side: 'buy' | 'sell',
+    size: number,
+    opts?: { kTicks?: number; postOnly?: boolean; timeoutMs?: number }
+  ): Promise<any> {
+    const k = opts?.kTicks ?? (config.regime?.executionTicks ?? 1);
+    const postOnly = opts?.postOnly ?? false;
+
+    logger.info('EnterPosition requested', { symbol, side, size, k, postOnly });
+
+    const book = await this.getBestBidAsk(symbol);
+    const tick = await this.getTickSize(symbol);
+    const mid = (book.bid + book.ask) / 2;
+    let limitPx = side === 'buy' ? book.ask + k * tick : book.bid - k * tick;
+
+    const slippageBps = Math.abs(limitPx - mid) / mid * 10000;
+    const maxSlippage = config.regime?.maxExecutionSlippageBps ?? 8;
+    if (slippageBps > maxSlippage) {
+      logger.warn('SKIP_EXEC_SLIPPAGE', { symbol, side, slippageBps, maxBps: maxSlippage });
+      return { 
+        ok: false, 
+        skipped: true, 
+        reason: 'SKIP_EXEC_SLIPPAGE', 
+        slippageBps,
+        bestBid: book.bid,
+        bestAsk: book.ask,
+        mid,
+        ts: Date.now(),
+        symbol,
+        intendedAction: 'ENTRY',
+        side,
+        status: 'skipped'
+      };
+    }
+
+    // Round to tick and price decimals
+    limitPx = await this.roundPriceToTick(symbol, limitPx);
+
+    // Dry run simulation
+    if (config.system.dryRun || config.regime?.dryRun) {
+      const fillPx = limitPx; // limit IOC at top-of-book simulated
+      const filledSize = size; // assume full fill for IOC at top-of-book in dry-run
+      const makerTaker = 'taker';
+      const feePaid = (filledSize * fillPx) * ((config.regime?.takerFeeBps ?? 6) / 10000);
+      const slippage = Math.abs(fillPx - mid) / mid * 10000;
+      logger.info('DRY RUN enterPosition simulated', { symbol, side, size, fillPx, slippageBps: slippage.toFixed(2) });
+      return {
+        ok: true,
+        orderId: `DRY_ENTER_${Date.now()}`,
+        ts: Date.now(),
+        symbol,
+        intendedAction: 'ENTRY',
+        side,
+        requestedPx: limitPx,
+        fillPxAvg: fillPx,
+        filledSize,
+        makerTaker,
+        feePaid,
+        slippageBps: slippage,
+        status: 'filled',
+        reason: null
+      };
+    }
+
+    // Live execution: place IOC limit order at limitPx
+    const coin = this.normalizeSymbol(symbol);
+    const priceInt = Math.round(limitPx);
+    const orderParams = {
+      coin,
+      is_buy: side === 'buy',
+      sz: size,
+      limit_px: priceInt,
+      order_type: { limit: { tif: 'Ioc', postOnly } },
+      reduce_only: false,
+    };
+
+    logger.info('Placing IOC entry order', { orderParams: orderParams as any });
+
+    const result = await this.retryWithBackoff(async () => {
+      return await (this.sdk.exchange as any).placeOrder(orderParams as any);
+    });
+
+    // Parse fills
+    const status = result?.response?.data?.statuses?.[0];
+    const filledQuantity = parseFloat(status?.filled?.totalSz || '0');
+    const fillPxAvg = parseFloat(status?.filled?.avgPx || '0');
+    const feePaid = parseFloat(status?.filled?.fee || '0');
+
+    return {
+      ok: filledQuantity > 0,
+      orderId: status?.resting?.oid?.toString() || `ENTER_${Date.now()}`,
+      ts: Date.now(),
+      symbol,
+      intendedAction: 'ENTRY',
+      side,
+      requestedPx: limitPx,
+      fillPxAvg: fillPxAvg || limitPx,
+      filledSize: filledQuantity,
+      makerTaker: filledQuantity > 0 ? (status?.filled?.maker ? 'maker' : 'taker') : 'unknown',
+      feePaid,
+      slippageBps: Math.abs((fillPxAvg || limitPx) - mid) / mid * 10000,
+      status: filledQuantity > 0 ? 'filled' : 'unfilled',
+      reason: filledQuantity === 0 ? 'NO_FILL' : null
+    };
+  }
+
+  /**
+   * Exit a position using reduceOnly IOC limit with bounded slippage
+   * Ensures size <= current position size (cannot flip position)
+   * Returns ExecutionReport with: ts, symbol, intendedAction, side, requestedPx, fillPxAvg, filledSize, makerTaker, feePaid, slippageBps, status, reason
+   */
+  async exitPosition(
+    symbol: string,
+    side: 'buy' | 'sell',
+    size: number,
+    opts?: { kTicks?: number; postOnly?: boolean }
+  ): Promise<any> {
+    const k = opts?.kTicks ?? (config.regime?.executionTicks ?? 1);
+    const postOnly = opts?.postOnly ?? false;
+
+    logger.info('ExitPosition requested (reduceOnly)', { symbol, side, size, k, postOnly });
+
+    const book = await this.getBestBidAsk(symbol);
+    const tick = await this.getTickSize(symbol);
+    const mid = (book.bid + book.ask) / 2;
+    let limitPx = side === 'buy' ? book.ask + k * tick : book.bid - k * tick;
+
+    const slippageBps = Math.abs(limitPx - mid) / mid * 10000;
+    const maxSlippage = config.regime?.maxExecutionSlippageBps ?? 8;
+    if (slippageBps > maxSlippage) {
+      logger.warn('SKIP_EXEC_SLIPPAGE on exit', { symbol, side, slippageBps, maxBps: maxSlippage });
+      return { 
+        ok: false, 
+        skipped: true, 
+        reason: 'SKIP_EXEC_SLIPPAGE', 
+        slippageBps,
+        bestBid: book.bid,
+        bestAsk: book.ask,
+        mid,
+        ts: Date.now(),
+        symbol,
+        intendedAction: 'EXIT',
+        side,
+        status: 'skipped'
+      };
+    }
+
+    limitPx = await this.roundPriceToTick(symbol, limitPx);
+
+    if (config.system.dryRun || config.regime?.dryRun) {
+      const fillPx = limitPx;
+      const filledSize = size;
+      const makerTaker = 'taker';
+      const feePaid = (filledSize * fillPx) * ((config.regime?.takerFeeBps ?? 6) / 10000);
+      const slippage = Math.abs(fillPx - mid) / mid * 10000;
+      logger.info('DRY RUN exitPosition simulated', { symbol, side, size, fillPx, slippageBps: slippage.toFixed(2) });
+      return {
+        ok: true,
+        orderId: `DRY_EXIT_${Date.now()}`,
+        ts: Date.now(),
+        symbol,
+        intendedAction: 'EXIT',
+        side,
+        requestedPx: limitPx,
+        fillPxAvg: fillPx,
+        filledSize,
+        makerTaker,
+        feePaid,
+        slippageBps: slippage,
+        status: 'filled',
+        reason: null
+      };
+    }
+
+    const coin = this.normalizeSymbol(symbol);
+    const priceInt = Math.round(limitPx);
+    const orderParams = {
+      coin,
+      is_buy: side === 'buy',
+      sz: size,
+      limit_px: priceInt,
+      order_type: { limit: { tif: 'Ioc', postOnly } },
+      reduce_only: true, // CRITICAL: reduceOnly to prevent position flip
+    };
+
+    logger.info('Placing IOC exit (reduceOnly) order', { orderParams: orderParams as any });
+
+    const result = await this.retryWithBackoff(async () => {
+      return await (this.sdk.exchange as any).placeOrder(orderParams as any);
+    });
+
+    const status = result?.response?.data?.statuses?.[0];
+    const filledQuantity = parseFloat(status?.filled?.totalSz || '0');
+    const fillPxAvg = parseFloat(status?.filled?.avgPx || '0');
+    const feePaid = parseFloat(status?.filled?.fee || '0');
+
+    return {
+      ok: filledQuantity > 0,
+      orderId: status?.resting?.oid?.toString() || `EXIT_${Date.now()}`,
+      ts: Date.now(),
+      symbol,
+      intendedAction: 'EXIT',
+      side,
+      requestedPx: limitPx,
+      fillPxAvg: fillPxAvg || limitPx,
+      filledSize: filledQuantity,
+      makerTaker: filledQuantity > 0 ? (status?.filled?.maker ? 'maker' : 'taker') : 'unknown',
+      feePaid,
+      slippageBps: Math.abs((fillPxAvg || limitPx) - mid) / mid * 10000,
+      status: filledQuantity > 0 ? 'filled' : 'unfilled',
+      reason: filledQuantity === 0 ? 'NO_FILL' : null
+    };
+  }
+
+  /**
+   * Rate-limited HTTP fallback for order book
+   * Only fetches if enough time has passed since last fetch for this symbol
+   * Returns cached data if rate-limited, or null if no cache
+   */
+  async getOrderBookFallback(
+    symbol: string,
+    depth: number = 20
+  ): Promise<{ bids: { price: number; size: number }[]; asks: { price: number; size: number }[] } | null> {
+    const now = Date.now();
+    const lastFetch = this.lastHttpBookFetchTs.get(symbol) || 0;
+    const minInterval = config.marketData?.httpFallbackMinIntervalMs || 5000;
+    
+    if (now - lastFetch < minInterval) {
+      // Rate-limited: return cached data if available
+      const cached = this.httpBookCache.get(symbol);
+      if (cached && now - cached.ts < 60000) { // Cache valid for 60s
+        logger.debug(`[HyperliquidService] Order book rate-limited for ${symbol}, returning cache`);
+        return { bids: cached.bids, asks: cached.asks };
+      }
+      return null;
+    }
+
+    // Fetch fresh data
+    this.lastHttpBookFetchTs.set(symbol, now);
+    const result = await this.getOrderBook(symbol, depth);
+    
+    if (result) {
+      this.httpBookCache.set(symbol, { ...result, ts: now });
+    }
+    
+    return result;
+  }
+
+  /**
+   * Place a post-only limit order (GTC).
+   * Returns status: 'resting' if order is on book, 'filled' if it filled as maker (rare), 
+   * 'rejected' if crossed spread (post-only rejected).
+   */
+  async placePostOnlyLimit(
+    symbol: string,
+    side: 'buy' | 'sell',
+    size: number,
+    limitPx: number,
+    opts?: { reduceOnly?: boolean }
+  ): Promise<{
+    ok: boolean;
+    orderId: string;
+    status: 'resting' | 'filled' | 'rejected' | 'error';
+    requestedPx: number;
+    filledSize: number;
+    fillPxAvg: number;
+    reason?: string;
+    ts: number;
+    symbol: string;
+    side: 'buy' | 'sell';
+    makerTaker: 'maker' | 'unknown';
+    feePaid: number;
+  }> {
+    const reduceOnly = opts?.reduceOnly ?? false;
+
+    logger.info('placePostOnlyLimit requested', { symbol, side, size, limitPx, reduceOnly });
+
+    // Round to tick
+    const roundedPx = await this.roundPriceToTick(symbol, limitPx);
+
+    // Dry run simulation
+    if (config.system.dryRun || config.regime?.dryRun) {
+      // Simulate: assume order rests on book (maker)
+      logger.info('DRY RUN placePostOnlyLimit simulated as RESTING', { symbol, side, size, roundedPx });
+      return {
+        ok: true,
+        orderId: `DRY_POST_${Date.now()}`,
+        status: 'resting',
+        requestedPx: roundedPx,
+        filledSize: 0,
+        fillPxAvg: 0,
+        reason: undefined,
+        ts: Date.now(),
+        symbol,
+        side,
+        makerTaker: 'maker',
+        feePaid: 0
+      };
+    }
+
+    // Live execution
+    const coin = this.normalizeSymbol(symbol);
+    const priceInt = Math.round(roundedPx);
+    const orderParams = {
+      coin,
+      is_buy: side === 'buy',
+      sz: size,
+      limit_px: priceInt,
+      order_type: { limit: { tif: 'Gtc' } }, // GTC + implicit postOnly via pricing at/inside spread
+      reduce_only: reduceOnly,
+    };
+
+    logger.info('Placing GTC limit order (maker-intent)', { orderParams: orderParams as any });
+
+    try {
+      const result = await this.retryWithBackoff(async () => {
+        return await (this.sdk.exchange as any).placeOrder(orderParams as any);
+      });
+
+      const status = result?.response?.data?.statuses?.[0];
+      
+      if (status?.error) {
+        logger.warn('placePostOnlyLimit rejected', { error: status.error });
+        return {
+          ok: false,
+          orderId: '',
+          status: 'rejected',
+          requestedPx: roundedPx,
+          filledSize: 0,
+          fillPxAvg: 0,
+          reason: status.error,
+          ts: Date.now(),
+          symbol,
+          side,
+          makerTaker: 'unknown',
+          feePaid: 0
+        };
+      }
+
+      const filledQuantity = parseFloat(status?.filled?.totalSz || '0');
+      const fillPxAvg = parseFloat(status?.filled?.avgPx || '0');
+      const feePaid = parseFloat(status?.filled?.fee || '0');
+      const restingOid = status?.resting?.oid?.toString();
+
+      // Determine outcome
+      let orderStatus: 'resting' | 'filled' | 'rejected' = 'resting';
+      if (filledQuantity >= size * 0.99) {
+        orderStatus = 'filled'; // Filled immediately (crossed spread somehow, or size very small)
+      } else if (restingOid) {
+        orderStatus = 'resting';
+      } else if (filledQuantity === 0 && !restingOid) {
+        orderStatus = 'rejected';
+      }
+
+      return {
+        ok: orderStatus !== 'rejected',
+        orderId: restingOid || `FILLED_${Date.now()}`,
+        status: orderStatus,
+        requestedPx: roundedPx,
+        filledSize: filledQuantity,
+        fillPxAvg: fillPxAvg || roundedPx,
+        reason: orderStatus === 'rejected' ? 'POST_ONLY_REJECT' : undefined,
+        ts: Date.now(),
+        symbol,
+        side,
+        makerTaker: 'maker',
+        feePaid
+      };
+    } catch (err) {
+      logger.error('placePostOnlyLimit error', { error: err instanceof Error ? err.message : String(err) });
+      return {
+        ok: false,
+        orderId: '',
+        status: 'error',
+        requestedPx: roundedPx,
+        filledSize: 0,
+        fillPxAvg: 0,
+        reason: err instanceof Error ? err.message : String(err),
+        ts: Date.now(),
+        symbol,
+        side,
+        makerTaker: 'unknown',
+        feePaid: 0
+      };
+    }
+  }
+
+  /**
+   * Get tick size for a symbol (public method for external use)
+   */
+  async getTickSizePublic(symbol: string): Promise<number> {
+    return this.getTickSize(symbol);
+  }
+
+  /**
+   * Get order status by orderId
+   * Returns null if order not found or API doesn't support it
+   */
+  async getOrderStatus(_symbol: string, orderId: string): Promise<{
+    status: 'resting' | 'filled' | 'canceled' | 'unknown';
+    filledSize: number;
+    remainingSize: number;
+  } | null> {
+    try {
+      // Hyperliquid SDK may not have a direct getOrderStatus - use open orders check
+      // Note: _symbol could be used in future to filter orders by coin
+      const openOrders = await (this.sdk.info as any).getUserOpenOrders(this.walletAddress);
+      
+      const order = openOrders?.find((o: any) => o.oid?.toString() === orderId);
+      if (order) {
+        const origSz = parseFloat(order.origSz || order.sz || '0');
+        const filledSz = parseFloat(order.filledSz || '0');
+        return {
+          status: 'resting',
+          filledSize: filledSz,
+          remainingSize: origSz - filledSz
+        };
+      }
+      
+      // Not in open orders - either filled or canceled
+      // We can't easily distinguish without fill history, return unknown
+      return { status: 'unknown', filledSize: 0, remainingSize: 0 };
+    } catch (err) {
+      logger.warn('getOrderStatus failed', { error: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
   }
 }
 

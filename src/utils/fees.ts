@@ -85,6 +85,54 @@ export function calculateRoundTripFees(entryNotional: number, exitNotional: numb
 }
 
 /**
+ * Calculate round-trip fee in basis points for maker or taker mode
+ * @param mode 'maker' or 'taker'
+ * @param makerFeeBps optional custom maker fee bps (can be negative for rebate)
+ * @param takerFeeBps optional custom taker fee bps
+ * @returns Round-trip fee in bps (entry + exit)
+ */
+export function feeBpsRoundTrip(
+  mode: 'maker' | 'taker',
+  makerFeeBps?: number,
+  takerFeeBps?: number
+): number {
+  const fees = getCurrentFees();
+  if (mode === 'maker') {
+    // Maker: use provided makerFeeBps or convert rate to bps
+    const mkrBps = makerFeeBps !== undefined ? makerFeeBps : fees.makerRate * 10000;
+    return 2 * mkrBps; // Round trip = entry + exit
+  } else {
+    // Taker
+    const tkrBps = takerFeeBps !== undefined ? takerFeeBps : fees.takerRate * 10000;
+    return 2 * tkrBps;
+  }
+}
+
+/**
+ * Calculate expected cost in bps for a trade
+ * @param mode 'maker' or 'taker'
+ * @param spreadBps actual spread in bps (from BBO)
+ * @param makerFeeBps maker fee bps (from config)
+ * @param takerFeeBps taker fee bps (from config)
+ * @param slippageBpsEst estimated slippage bps (from config)
+ * @returns Total expected cost in bps
+ */
+export function expectedCostBps(
+  mode: 'maker' | 'taker',
+  spreadBps: number,
+  makerFeeBps: number,
+  takerFeeBps: number,
+  slippageBpsEst: number
+): number {
+  const feeBps = feeBpsRoundTrip(mode, makerFeeBps, takerFeeBps);
+  // Maker has ~20% slippage risk (queue jump), taker has full slippage
+  const slippageAdj = mode === 'maker' ? 0.2 * slippageBpsEst : slippageBpsEst;
+  // Spread is paid only for taker (crosses spread), maker sits on book
+  const spreadCost = mode === 'taker' ? spreadBps : 0;
+  return feeBps + spreadCost + slippageAdj;
+}
+
+/**
  * Calculate net P&L after fees
  * @param grossPnl Gross P&L before fees
  * @param entryPrice Entry price

@@ -8,10 +8,11 @@ import { logger } from '../core/logger';
 import { backtestEngine, BacktestConfig } from '../backtest/backtestEngine';
 import { liquidityTracker } from '../services/liquidityTracker';
 import { spikeAnalyzer } from '../services/spikeAnalyzer';
-import { spooferProfiler } from '../services/spooferProfiler';
+// spooferProfiler removed - strategy no longer uses spoofing detection
 import { multiSymbolTracker } from '../services/multiSymbolLiquidityTracker';
 import { eventDrivenTradeLoop, TradeSignal, TradeExecution } from '../core/eventDrivenTradeLoop';
 import { config } from '../utils/config';
+import { getRegimeSignal } from '../services/regimeSignal';
 
 /**
  * Pending order structure
@@ -82,9 +83,9 @@ export class WebServer {
    * Setup Express routes
    */
   private setupRoutes(): void {
-    // Redirect root to anti-spoofing dashboard
+    // Redirect root to main dashboard (was /antispoof)
     this.app.get('/', (_req: Request, res: Response) => {
-      res.redirect('/antispoof');
+      res.redirect('/dashboard');
     });
 
     // Old dashboard (legacy)
@@ -307,6 +308,17 @@ export class WebServer {
       }
     });
 
+    // Symbol detail page
+    this.app.get('/symbol/:symbol', async (req: Request, res: Response) => {
+      try {
+        const { symbol } = req.params;
+        res.render('symbol', { title: `Symbol ${symbol}`, symbol });
+      } catch (err) {
+        logger.error('Error loading symbol page', err);
+        res.status(500).send('Errore nel caricamento della pagina simbolo');
+      }
+    });
+
     // API Endpoints
     this.app.get('/api/stats', async (_req: Request, res: Response) => {
       try {
@@ -345,9 +357,26 @@ export class WebServer {
           });
         }
         
+        // Surface trading enabled / dry-run flags for dashboard
+        stats.trading_enabled = !!config.system.enableLiveTrading;
+        stats.dry_run = !!(config.system.dryRun || config.regime?.dryRun);
         res.json(stats);
       } catch (error) {
         res.status(500).json({ error: 'Failed to fetch stats' });
+      }
+    });
+
+    // ========================================
+    // CONSOLIDATED DASHBOARD STATE ENDPOINT
+    // Returns kill switch, cooldown, per-symbol state, execution quality
+    // ========================================
+    this.app.get('/api/dashboard/state', async (_req: Request, res: Response) => {
+      try {
+        const state = await eventDrivenTradeLoop.getDashboardState();
+        res.json(state);
+      } catch (error) {
+        logger.error('Failed to get dashboard state', { error: String(error) });
+        res.status(500).json({ error: 'Failed to fetch dashboard state' });
       }
     });
 
@@ -516,43 +545,155 @@ export class WebServer {
       }
     });
 
-    // API: Spoofer Profiler - identificazione spoofer
-    this.app.get('/api/spoofer/profiles', async (_req: Request, res: Response) => {
+    // NEW: Regime/Signal API - returns regime signal + edge gate evaluation
+    this.app.get('/api/signals', async (_req: Request, res: Response) => {
       try {
-        const profiles = spooferProfiler.getAllProfiles();
-        res.json(profiles);
+        const symbols = config.trading.symbols || [];
+        const results: Record<string, any> = {};
+        for (const symbol of symbols) {
+          try {
+            const sig = await getRegimeSignal(symbol);
+            const holdingFactor = Math.max(1, (config.regime!.maxHoldSeconds || 60) / 60);
+            const vol30 = sig.metrics?.vol30m || (sig as any).vol_30m || 0;
+            const expectedMoveBps = vol30 * Math.sqrt(holdingFactor) * 10000;
+            const feeBps = (config.regime!.takerFeeBps || 35) * 2; // round-trip
+            const spreadBps = config.regime!.spreadBpsEst || 10;
+            const slippageBps = config.regime!.slippageBpsEst || 5;
+            const costTotal = feeBps + spreadBps + slippageBps;
+            const netEdge = expectedMoveBps - costTotal;
+            const pass = netEdge >= (config.regime!.minNetEdgeBps || 0) && sig.compression && (sig.volumeSpike || sig.breakout?.up || sig.breakout?.down);
+
+            results[symbol] = {
+              signal: sig,
+              edge: {
+                ts: Date.now(),
+                symbol,
+                expected_move_bps: expectedMoveBps,
+                cost_bps_total: costTotal,
+                cost_breakdown: { fee_bps: feeBps, spread_bps_est: spreadBps, slippage_bps_est: slippageBps },
+                net_edge_bps: netEdge,
+                pass,
+                reason: pass ? 'PASS' : 'FAIL_EDGE'
+              }
+            };
+          } catch (err) {
+            results[symbol] = { error: 'failed to compute signal' };
+          }
+        }
+        res.json(results);
       } catch (error) {
-        res.status(500).json({ error: 'Failed to get spoofer profiles' });
+        res.status(500).json({ error: 'Failed to fetch signals' });
       }
     });
 
-    // API: Active Spoofers
-    this.app.get('/api/spoofer/active', async (_req: Request, res: Response) => {
+    // API: Regime timeseries (compression, volume) for a symbol
+    this.app.get('/api/signals/history/:symbol', async (req: Request, res: Response) => {
       try {
-        const active = spooferProfiler.getActiveSpoofers();
-        res.json(active);
-      } catch (error) {
-        res.status(500).json({ error: 'Failed to get active spoofers' });
+        const { symbol } = req.params;
+        const minutes = parseInt(req.query.minutes as string) || 120;
+
+        // Fetch 1m candles for the requested window (+extra for vol30 rolling)
+        const limit = Math.max(minutes + 30, 60);
+        const candles = await hyperliquidService.getCandles(symbol, '1m', limit);
+
+        // Build arrays of timestamps, volume1m, vol5m, vol30m, compression
+        const times: number[] = [];
+        const vol1: number[] = [];
+        const vol5: number[] = [];
+        const vol30: number[] = [];
+        const compression: number[] = [];
+
+        // Precompute cumulative volumes for O(1) range sums
+        const cumVol: number[] = [];
+        for (let i = 0; i < candles.length; i++) {
+          const v = candles[i].volume || 0;
+          cumVol[i] = (i === 0 ? 0 : cumVol[i - 1]) + v;
+        }
+
+        // We'll return the most recent `minutes` points
+        const startIdx = Math.max(0, candles.length - minutes);
+        for (let i = startIdx; i < candles.length; i++) {
+          times.push(candles[i].timestamp);
+          vol1.push(candles[i].volume || 0);
+
+          // vol5: sum of last 5 candles ending at i
+          const i5 = Math.max(0, i - 5 + 1);
+          const sum5 = cumVol[i] - (i5 > 0 ? cumVol[i5 - 1] : 0);
+          vol5.push(sum5);
+
+          // vol30
+          const i30 = Math.max(0, i - 30 + 1);
+          const sum30 = cumVol[i] - (i30 > 0 ? cumVol[i30 - 1] : 0);
+          vol30.push(sum30);
+
+          const comp = sum30 > 0 ? (sum5 / sum30) : 0;
+          compression.push(comp);
+        }
+
+        res.json({ symbol, ts: Date.now(), minutes, times, vol1, vol5, vol30, compression });
+      } catch (err) {
+        logger.error('Failed to fetch signals history', { error: String(err) });
+        res.status(500).json({ error: 'Failed to fetch signals history' });
       }
     });
 
-    // API: Spoofer Stats
-    this.app.get('/api/spoofer/stats', async (_req: Request, res: Response) => {
+    // Market snapshot for a symbol - wraps multiSymbolTracker snapshot
+    this.app.get('/api/market/:symbol', async (req: Request, res: Response) => {
       try {
-        const stats = spooferProfiler.getStats();
-        res.json(stats);
-      } catch (error) {
-        res.status(500).json({ error: 'Failed to get spoofer stats' });
+        const { symbol } = req.params;
+        const snap = multiSymbolTracker.getSnapshot(symbol);
+        if (!snap) return res.status(404).json({ error: `No data for ${symbol}` });
+        return res.json(snap);
+      } catch (err) {
+        return res.status(500).json({ error: 'Failed to fetch market snapshot' });
       }
     });
 
-    // API: Spoofer-based Trading Signal
-    this.app.get('/api/spoofer/signal', async (_req: Request, res: Response) => {
+    // Edge evaluation for a symbol (single)
+    this.app.get('/api/edge/:symbol', async (req: Request, res: Response) => {
       try {
-        const signal = spooferProfiler.getSpooferBasedSignal();
-        res.json(signal);
-      } catch (error) {
-        res.status(500).json({ error: 'Failed to get spoofer signal' });
+        const { symbol } = req.params;
+        const sig = await getRegimeSignal(symbol);
+        const holdingFactor = Math.max(1, (config.regime!.maxHoldSeconds || 60) / 60);
+        const vol30 = sig.metrics?.vol30m || (sig as any).vol_30m || 0;
+        const expectedMoveBps = vol30 * Math.sqrt(holdingFactor) * 10000;
+        const feeBps = (config.regime!.takerFeeBps || 35) * 2;
+        const spreadBps = config.regime!.spreadBpsEst || 10;
+        const slippageBps = config.regime!.slippageBpsEst || 5;
+        const costTotal = feeBps + spreadBps + slippageBps;
+        const netEdge = expectedMoveBps - costTotal;
+        const pass = netEdge >= (config.regime!.minNetEdgeBps || 0) && sig.compression;
+        res.json({
+          ts: Date.now(), symbol, expected_move_bps: expectedMoveBps,
+          cost_bps_total: costTotal,
+          cost_breakdown: { fee_bps: feeBps, spread_bps_est: spreadBps, slippage_bps_est: slippageBps },
+          net_edge_bps: netEdge,
+          pass,
+          reason: pass ? 'PASS' : 'FAIL_EDGE',
+          signal: sig
+        });
+      } catch (err) {
+        res.status(500).json({ error: 'Failed to compute edge' });
+      }
+    });
+
+    // Risk status for dashboard
+    this.app.get('/api/risk/status', async (_req: Request, res: Response) => {
+      try {
+        const stats = await dbService.getDashboardStats();
+        const risk = {
+          ts: Date.now(),
+          daily_realized_pnl_net: parseFloat(stats.today_pnl || 0),
+          daily_drawdown_pct: parseFloat(stats.drawdown_pct || 0) || 0,
+          consecutive_losses: parseInt(stats.consecutive_losses || 0) || 0,
+          trades_today: parseInt(stats.today_trades || 0) || 0,
+          kill_switch_active: !!stats.kill_switch_active,
+          kill_switch_reason: stats.kill_switch_reason || null,
+          last_error: stats.last_error || null
+        };
+        res.json(risk);
+      } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch risk status' });
       }
     });
 
@@ -728,6 +869,17 @@ export class WebServer {
       }
     });
 
+    // API: Recent executions (trade fills / execution reports)
+    this.app.get('/api/executions/recent', async (_req: Request, res: Response) => {
+      try {
+        const limit = parseInt((_req.query.limit as string) || '50');
+        const rows = await dbService.getRecentExecutions(limit);
+        res.json(rows);
+      } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch executions' });
+      }
+    });
+
     // API: Get pending orders
     this.app.get('/api/orders/pending', (_req: Request, res: Response) => {
       try {
@@ -881,17 +1033,79 @@ export class WebServer {
     // ========================================
     
     // Signal updates (on every tick)
-    eventDrivenTradeLoop.on('signal', (signal: TradeSignal) => {
-      if (connectedClients > 0) {
+    eventDrivenTradeLoop.on('signal', async (signal: TradeSignal) => {
+      if (connectedClients === 0) return;
+      try {
+        // Enrich signal with regime & edge info for the dashboard
+        const sym = signal.symbol;
+        const regime = await getRegimeSignal(sym).catch(() => null);
+        let edge = null;
+        if (regime) {
+          const holdingFactor = Math.max(1, (config.regime!.maxHoldSeconds || 60) / 60);
+          const vol30 = regime.metrics?.vol30m || (regime as any).vol_30m || 0;
+          const expectedMoveBps = vol30 * Math.sqrt(holdingFactor) * 10000;
+          const feeBps = (config.regime!.takerFeeBps || 35) * 2;
+          const spreadBps = config.regime!.spreadBpsEst || 10;
+          const slippageBps = config.regime!.slippageBpsEst || 5;
+          const costTotal = feeBps + spreadBps + slippageBps;
+          const netEdge = expectedMoveBps - costTotal;
+          const pass = netEdge >= (config.regime!.minNetEdgeBps || 0) && regime.compression;
+          edge = { ts: Date.now(), symbol: sym, expected_move_bps: expectedMoveBps, cost_bps_total: costTotal, cost_breakdown: { fee_bps: feeBps, spread_bps_est: spreadBps, slippage_bps_est: slippageBps }, net_edge_bps: netEdge, pass, reason: pass ? 'PASS' : 'FAIL_EDGE' };
+        }
+        this.io.emit('signal:update', { symbol: signal.symbol, raw: signal, signal: regime, edge });
+      } catch (err) {
+        // fallback to original signal
         this.io.emit('signal:update', signal);
       }
     });
 
     // Trade executions (open/close)
-    eventDrivenTradeLoop.on('trade', (execution: TradeExecution) => {
+    eventDrivenTradeLoop.on('trade', async (execution: TradeExecution) => {
+      try {
+        // Persist execution to DB for history
+        await dbService.saveExecution(execution).catch(err => logger.warn('Failed to persist execution', { error: String(err) }));
+      } catch (e) {
+        logger.warn('Execution persistence error', { error: String(e) });
+      }
+
       if (connectedClients > 0) {
         this.io.emit('trade:execution', execution);
         logger.info(`[WebSocket] Trade execution emitted: ${execution.type} ${execution.side} ${execution.symbol}`);
+      }
+    });
+
+    // Execution reports (per-order / per-fill)
+    eventDrivenTradeLoop.on('execution:report', async (exec: any) => {
+      try {
+        // Persist execution
+        await dbService.saveExecution(exec).catch(err => logger.warn('Failed to persist execution report', { error: String(err) }));
+      } catch (e) {
+        logger.warn('Execution report persistence error', { error: String(e) });
+      }
+
+      if (connectedClients > 0) {
+        this.io.emit('execution:report', exec);
+        logger.info('[WebSocket] Execution report emitted', { symbol: exec.symbol, side: exec.side });
+      }
+    });
+
+    // Gate evaluations (edge gating)
+    eventDrivenTradeLoop.on('gate:evaluation', async (gate: any) => {
+      try {
+        // Save to system logs for now
+        await dbService.saveLog('INFO', 'GateEvaluation', gate).catch(() => {});
+      } catch (e) {
+        // ignore
+      }
+      if (connectedClients > 0) {
+        this.io.emit('gate:evaluation', gate);
+      }
+    });
+
+    // Lifecycle updates
+    eventDrivenTradeLoop.on('lifecycle:update', async (update: any) => {
+      if (connectedClients > 0) {
+        this.io.emit('lifecycle:update', update);
       }
     });
 

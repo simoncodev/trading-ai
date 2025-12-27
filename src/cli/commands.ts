@@ -8,7 +8,6 @@ import { aiEngine } from '../ai/aiEngine';
 import { config } from '../utils/config';
 import { BacktestConfig } from '../types';
 import { formatCurrency, formatPercentage } from '../utils/math';
-import { spooferProfiler } from '../services/spooferProfiler';
 import WebServer from '../web/server';
 
 /**
@@ -51,9 +50,6 @@ export class Commands {
       // Export webServer for other modules
       (global as any).webServer = webServer;
       
-      // Start spoofer profiler for fingerprinting
-      logger.info(`🔍 Starting spoofer profiler...`);
-      spooferProfiler.start();
       
       // NOTE: tradeLoop.start() removed - using eventDrivenTradeLoop instead
       // The eventDrivenTradeLoop is started inside WebServer.start()
@@ -65,7 +61,6 @@ export class Commands {
       process.on('SIGINT', async () => {
         console.log('\n\n⏹️  Shutting down gracefully...');
         if (webServer) await webServer.stop();
-        spooferProfiler.stop();
         eventDrivenTradeLoop.stop();
         this.printStatistics();
         process.exit(0);
@@ -74,7 +69,6 @@ export class Commands {
       process.on('SIGTERM', async () => {
         console.log('\n\n⏹️  Shutting down gracefully...');
         if (webServer) await webServer.stop();
-        spooferProfiler.stop();
         eventDrivenTradeLoop.stop();
         this.printStatistics();
         process.exit(0);
